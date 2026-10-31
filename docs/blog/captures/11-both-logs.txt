@@ -1,0 +1,28 @@
+Step 11: end-to-end back-channel logout, 2026-10-30 (local time, +05:30)
+Both logs are from the same machine clock. Codes, state values and tokens are removed.
+
+-- Sign-in (window A) --
+15:43:18.557  WebApp     GET  /Account/SignIn                 -> 302 (challenge)
+15:43:20.983  ThunderID  POST /oauth2/par                     201
+15:43:21.008  ThunderID  GET  /oauth2/authorize               302
+15:43:23.897  ThunderID  POST /oauth2/auth/callback           200
+15:43:24.202  ThunderID  POST /oauth2/token                   200
+15:43:24.343  WebApp     GET  /Profile                        -> 200  (signed in as alice, sid 01a18c4c-...-11bd447824cd)
+
+-- Session ended from window B --
+15:43:41.262  ThunderID  GET  /oauth2/logout                  302
+15:43:42.130  ThunderID  POST /flow/execute                   200
+15:43:42.152  ThunderID  POST /oauth2/logout/callback         200  (session deleted, logout tokens sent)
+15:43:42.164  WebApp     POST /backchannel-logout  application/x-www-form-urlencoded 894 bytes
+15:43:42.213  WebApp     Back-channel logout recorded: sid 01a18c4c-c519-79f8-8c02-11bd447824cd, sub 01a182da-b10c-764b-bcc3-4bf3f93282de
+15:43:42.215  WebApp     POST /backchannel-logout -> 200 (51 ms)
+
+-- Refresh in window A --
+15:43:48.056  WebApp     GET  /Profile
+15:43:48.059  WebApp     Refused a cookie session ended by back-channel logout: sid 01a18c4c-c519-79f8-8c02-11bd447824cd
+15:43:48.265  ThunderID  POST /oauth2/par                     201  (new sign-in started by the app's challenge)
+15:43:48.267  WebApp     GET  /Profile -> 302 to ThunderID sign-in
+15:43:48.284  ThunderID  GET  /oauth2/authorize               302 -> /gate/signin
+
+Latency: ThunderID finished ending the session at 15:43:42.152.
+The logout token reached the app 12 ms later and was recorded 61 ms after the session ended.

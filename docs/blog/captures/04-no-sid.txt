@@ -1,0 +1,15 @@
+ID token after the first successful sign-in (decoded):
+header:  { "alg": "RS256", "kid": "MT-DQ4F...", "typ": "JWT" }
+payload: { "aud": "WItzJCtJA0Ij77xkgHIjKg", "auth_time": 1793205331, "exp": 1793208931, "iat": 1793205331,
+           "iss": "https://localhost:8090", "jti": "01a1835d-...", "nbf": 1793205331,
+           "nonce": "639288020953268563.0z0P...", "sub": "01a182da-b10c-764b-bcc3-4bf3f93282de" }
+-> no sid, no name, no email
+
+Where sid comes from (backend/internal/oauth/oauth2/authz/service.go:1075): the auth assertion's sid,
+which only a flow with a session step produces (docs-internals/back-channel-logout/spec.md:458, AC3.1).
+
+aspnet-webapp AUTH_FLOW_ID = default-flow ("Default Authentication Flow"):
+  start -> prompt_credentials -> credentials_auth -> authorization_check -> auth_assert -> end
+console-app-flow ("Console App Authentication Flow"):
+  start -> sso_check (SSOCheckExecutor) -> prompt_credentials -> credentials_auth -> session (SessionExecutor)
+        -> authorization_check -> auth_assert -> end

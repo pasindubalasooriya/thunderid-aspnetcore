@@ -1,0 +1,4 @@
+samples/WebApp/backchannel-probe.log (token truncated):
+2026-10-28T17:06:24.4333932+00:00 application/x-www-form-urlencoded logout_token=eyJhbGciOiJSUzI1NiIsImtpZCI6I...<881 chars total>
+
+The app answered 200 and did nothing else. Alice stayed signed in.

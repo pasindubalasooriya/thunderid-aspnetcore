@@ -1,0 +1,81 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using Microsoft.IdentityModel.Tokens;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddRazorPages();
+builder.Services.AddHttpClient();
+
+// Step 4: stock ASP.NET Core OpenID Connect, no ThunderID helpers yet.
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+    })
+    .AddCookie()
+    .AddOpenIdConnect(options =>
+    {
+        options.Authority = builder.Configuration["ThunderID:Authority"];
+        options.ClientId = builder.Configuration["ThunderID:ClientId"];
+        options.ClientSecret = builder.Configuration["ThunderID:ClientSecret"];
+        options.ResponseType = "code";
+        // ThunderID accepts only response_mode=query; ASP.NET Core defaults to form_post.
+        options.ResponseMode = "query";
+        // ThunderID caps nonce at 64 characters; ASP.NET Core's default nonce is about 115.
+        options.ProtocolValidator = new ShortNonceProtocolValidator
+        {
+            RequireStateValidation = false,
+            NonceLifetime = TimeSpan.FromMinutes(15),
+        };
+        options.SaveTokens = true;
+        options.Scope.Add("email");
+        options.Scope.Add("billing:read");
+        // RFC 8707 resource indicator: ThunderID uses it to choose the access token's audience.
+        options.Resource = builder.Configuration["BillingApi:BaseUrl"];
+    });
+
+var app = builder.Build();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");
+    app.UseHsts();
+}
+
+app.UseHttpsRedirection();
+
+app.UseRouting();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapStaticAssets();
+app.MapRazorPages()
+   .WithStaticAssets();
+
+// Temporary probe: logs whatever ThunderID posts here. Replaced by the real receiver in step 10.
+app.MapPost("/backchannel-logout", async (HttpContext context, ILogger<Program> logger) =>
+{
+    using var reader = new StreamReader(context.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    logger.LogWarning("Back-channel probe: POST {ContentType} {Length} bytes: {Body}",
+        context.Request.ContentType, body.Length, body);
+    await File.AppendAllTextAsync(Path.Combine(app.Environment.ContentRootPath, "backchannel-probe.log"),
+        $"{DateTimeOffset.UtcNow:O} {context.Request.ContentType} {body}{Environment.NewLine}");
+    return Results.Ok();
+});
+
+app.Run();
+
+// Same "<ticks>.<random>" shape as the default, so the timestamp check still works, but 62 characters long.
+class ShortNonceProtocolValidator : OpenIdConnectProtocolValidator
+{
+    public override string GenerateNonce() =>
+        DateTime.UtcNow.Ticks.ToString(CultureInfo.InvariantCulture) + "." +
+        Base64UrlEncoder.Encode(RandomNumberGenerator.GetBytes(32));
+}

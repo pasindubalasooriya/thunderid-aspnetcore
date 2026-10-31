@@ -1,0 +1,19 @@
+Access token (decoded payload) from alice's sign-in with resource=https://localhost:7102, scope "openid profile email billing:read":
+{
+  "aci": "01a18b99-5421-7697-9717-abb6c6e277b0",
+  "aud": "https://localhost:7102",
+  "client_id": "WItzJCtJA0Ij77xkgHIjKg",
+  "exp": 1793347044,
+  "grant_type": "authorization_code",
+  "iat": 1793343444,
+  "iss": "https://localhost:8090",
+  "jti": "01a18b99-55a2-78c0-a324-91aa69422d20",
+  "nbf": 1793343444,
+  "scope": "openid profile email billing:read",
+  "sub": "01a182da-b10c-764b-bcc3-4bf3f93282de",
+  "tfid": "01a18b99-541f-7148-9c15-349e2e6f41be"
+}
+Valid for 1 h. No sid (as designed). aud = the resource server identifier.
+
+GET https://localhost:7102/billing with this token -> HTTP 403 (no WWW-Authenticate error: the token was valid, the policy failed).
+Policy: RequireClaim("scope", "billing:read")

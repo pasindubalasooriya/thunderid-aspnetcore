@@ -1,0 +1,10 @@
+$ curl -sk -o /dev/null -w '%{http_code}' https://localhost:7101/Claims
+500
+
+WebApp log (trimmed):
+System.InvalidOperationException: IDX20803: Unable to obtain configuration from: 'https://localhost:8090/.well-known/openid-configuration'.
+ ---> System.IO.IOException: IDX20804: Unable to retrieve document from: 'https://localhost:8090/.well-known/openid-configuration'.
+ ---> System.Net.Http.HttpRequestException: The SSL connection could not be established, see inner exception.
+ ---> System.Security.Authentication.AuthenticationException: The remote certificate is invalid because of errors in the certificate chain: UntrustedRoot
+
+ThunderID server.cert: Subject = Issuer = CN=localhost, OU=ThunderID, O=ThunderID (self-signed), SAN localhost, 127.0.0.1

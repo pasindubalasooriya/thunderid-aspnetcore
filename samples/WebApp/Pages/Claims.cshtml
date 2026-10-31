@@ -1,0 +1,37 @@
+@page
+@model ClaimsModel
+@{
+    ViewData["Title"] = "Claims";
+}
+
+<h1>Claims</h1>
+
+<p>
+    <code>User.Identity.Name</code>: <strong>@(User.Identity?.Name ?? "(null)")</strong>
+</p>
+
+<h2 class="h4 mt-4">What ASP.NET Core put in the cookie</h2>
+<table class="table table-sm">
+    <thead>
+        <tr><th>Type</th><th>Value</th></tr>
+    </thead>
+    <tbody>
+        @foreach (var claim in User.Claims)
+        {
+            <tr><td><code>@claim.Type</code></td><td>@claim.Value</td></tr>
+        }
+    </tbody>
+</table>
+
+<h2 class="h4 mt-4">What ThunderID put in the ID token</h2>
+@if (Model.IdTokenPayload is null)
+{
+    <p>No ID token was saved.</p>
+}
+else
+{
+    <h3 class="h6">Header</h3>
+    <pre>@Model.IdTokenHeader</pre>
+    <h3 class="h6">Payload</h3>
+    <pre>@Model.IdTokenPayload</pre>
+}

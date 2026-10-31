@@ -1,0 +1,5 @@
+GET                                          -> HTTP/1.1 404 Not Found  
+POST JSON                                    -> HTTP/1.1 400 Bad Request Cache-Control: no-store  {"error":"invalid_request","error_description":"content type is not application/x-www-form-urlencoded"}
+POST form, no logout_token                   -> HTTP/1.1 400 Bad Request Cache-Control: no-store  {"error":"invalid_request","error_description":"body must carry exactly one logout_token"}
+POST form, garbage token                     -> HTTP/1.1 400 Bad Request Cache-Control: no-store  {"error":"invalid_request","error_description":"logout_token is not a JWT"}
+POST form, real-shaped JWT (expired, step 5) -> HTTP/1.1 400 Bad Request Cache-Control: no-store  {"error":"invalid_request","error_description":"token is outside its lifetime"}

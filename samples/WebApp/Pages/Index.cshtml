@@ -1,0 +1,20 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+
+<div class="text-center">
+    @if (User.Identity?.IsAuthenticated == true)
+    {
+        <h1 class="display-4">Hello, @UserDisplay.DisplayName(User)</h1>
+        <p>You're signed in with ThunderID.</p>
+        <a class="btn btn-primary" asp-page="/Profile">View profile</a>
+    }
+    else
+    {
+        <h1 class="display-4">Welcome</h1>
+        <p>You're not signed in.</p>
+        <a class="btn btn-primary" asp-page="/Account/SignIn">Sign in with ThunderID</a>
+    }
+</div>

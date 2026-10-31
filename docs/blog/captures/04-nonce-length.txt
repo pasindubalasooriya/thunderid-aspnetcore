@@ -1,0 +1,15 @@
+After the response_mode fix, /Claims on https://localhost:7101:
+OpenIdConnectProtocolException: Message contains error: 'invalid_request',
+error_description: 'nonce exceeds maximum allowed length'
+
+ASP.NET Core default nonce (115 characters):
+639288011787499201.Yjg3ZWU5YzEtZDZjOC00ODYyLTliNzUtZmE...   <ticks>.<base64 of two GUIDs>
+
+ThunderID (backend/internal/oauth/oauth2/constants/constants.go:97):
+    MaxNonceLength = 64
+
+After overriding GenerateNonce (62 characters):
+639288019080266326.RJOo7BJ0-0TT1Xk_0Mk9mlsl4PZySnlkGeoySPjZSaw
+
+Replaying the captured PAR body to https://localhost:8090/oauth2/par:
+{"request_uri":"urn:...<truncated>","expires_in":60}

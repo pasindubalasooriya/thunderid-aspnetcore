@@ -1,0 +1,40 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Step 7: stock ASP.NET Core JWT bearer validation, no ThunderID helpers yet.
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = builder.Configuration["ThunderID:Authority"];
+        options.Audience = builder.Configuration["ThunderID:Audience"];
+    });
+
+// The obvious way to require a scope. Step 7 checks whether it works against ThunderID's tokens.
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("billing:read", policy => policy.RequireClaim("scope", "billing:read"));
+
+var app = builder.Build();
+
+app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapGet("/public", () => Results.Ok(new { message = "Anyone can read this." }));
+
+app.MapGet("/me", (HttpContext context) => Results.Ok(new
+{
+    claims = context.User.Claims.Select(c => new { c.Type, c.Value }),
+})).RequireAuthorization();
+
+app.MapGet("/billing", () => Results.Ok(new
+{
+    invoices = new[]
+    {
+        new { id = "INV-1001", amount = 120.00m, status = "paid" },
+        new { id = "INV-1002", amount = 75.50m, status = "due" },
+    },
+})).RequireAuthorization("billing:read");
+
+app.Run();

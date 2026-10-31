@@ -1,0 +1,9 @@
+@Api_HostAddress = https://localhost:7102
+
+GET {{Api_HostAddress}}/public
+
+###
+
+GET {{Api_HostAddress}}/billing
+
+###

@@ -1,0 +1,40 @@
+@page
+@model CallApiModel
+@{
+    ViewData["Title"] = "Call API";
+}
+
+<h1>Call the billing API</h1>
+<p><code>GET https://localhost:7102/billing</code> with the access token ThunderID issued at sign-in.</p>
+
+@if (Model.BillingStatusCode is null)
+{
+    <p>No access token was saved.</p>
+}
+else
+{
+    <div class="alert @(Model.BillingStatusCode == 200 ? "alert-success" : "alert-danger")">
+        HTTP <strong>@Model.BillingStatusCode</strong>
+        @if (!string.IsNullOrEmpty(Model.WwwAuthenticate))
+        {
+            <div><code>WWW-Authenticate: @Model.WwwAuthenticate</code></div>
+        }
+    </div>
+    @if (!string.IsNullOrEmpty(Model.ResponseBody))
+    {
+        <h2 class="h5">Response</h2>
+        <pre>@Model.ResponseBody</pre>
+    }
+}
+
+@if (Model.MeStatusCode is not null)
+{
+    <h2 class="h5 mt-4">What the API sees (<code>GET /me</code>, HTTP @Model.MeStatusCode)</h2>
+    <pre>@Model.MeResponseBody</pre>
+}
+
+@if (Model.AccessTokenPayload is not null)
+{
+    <h2 class="h5 mt-4">Access token payload</h2>
+    <pre>@Model.AccessTokenPayload</pre>
+}

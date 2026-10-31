@@ -1,0 +1,5 @@
+ThunderID server.log: no new lines during the logout.
+Successful delivery is logged at Debug level only (backend/internal/oauth/oauth2/logout/backchannel/dispatcher.go:518),
+failures at Warn (dispatcher.go:526). The server runs at Info, so silence here means no failure.
+
+runtime_persistent.db SSO_SESSION row 01a18372-2364-7a2a-afe3-c0626b927850: deleted after the logout.
