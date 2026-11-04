@@ -757,3 +757,35 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
 
 - `release.yml` parses with `yaml.safe_load`; the three publishing steps all have `if: env.PUBLISH == 'true'`. No em dashes, and no bare product short form.
 - **Surprise:** the first `git add` refused `docs/releases/`; `.gitignore:26` (`[Rr]eleases/`, from the Visual Studio template, meant for build output) matches it. Renamed it to `docs/release-notes/` rather than change the ignore rules, and re-ran the missing-notes test against the new path.
+- Committed as `e865b06` "Remove the parity check workflow" and `d3644b6` "Add the release workflow and the 0.1.0 release notes", then pushed to `phase-1`.
+- `gh variable set NUGET_USER --body pasindudilshanbalasooriya`; `gh variable list` shows it. The PR description no longer mentions the parity check, and now describes the release workflow.
+- PR builder on `d3644b6`: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41823851351, pass. "No vulnerable packages.", "0 Warning(s)", "Passed: 120".
+- `release.yml` can't run until it's on `main`: GitHub only offers manual runs for workflows on the default branch. The dry run is in Step 11, after the merge.
+- `[YOU]`: the nuget.org trusted publishing policy, pending.
+- `[YOU]`: you reported the trusted publishing policy created ("done"). Its first form showed "At least one valid glob pattern or package must be specified"; the package field takes `ThunderID.AspNetCore`.
+
+### Step 11: Update the records (2026-11-04)
+
+- First, a check of the recount script (`recount.py`, scratchpad): it reproduced the matrix's recorded totals before any edit, 58 Meets, 22 Partial, 40 Gap, 37 N/A. It counts each table row by the status in its second or third cell.
+- `docs/validation/spec-matrix.md`: 30 rows rewritten by script, each keeping its rule text and getting "**Phase 1:**" evidence (test names, code lines, README lines, the CI run). AC7.2 was also rewritten, with the same status and evidence as before. The rows, by new status:
+  - **Meets:** BCL-3b, AC9.2, S7, AC4.8, BCL-8, F2, C6, C5, L7, AC1.1, L2, AC1.4, D5, AC6.5, R1, D6, AC7.7, K2, T1, AC7.1. K1 stays Meets, now citing `net10.0`.
+  - **Partial:** R3 and T8 moved up from Gap. S1, S2, S11, AC3.3, C2, T2 and AC7.2 keep their status, with the documentation or new tests noted.
+  - **Gap:** R2 stays a Gap.
+- Judgement calls, stated in the rows:
+  - D5 is Meets because the remaining `localhost` values are configuration defaults, not code.
+  - R1 counts the .NET analyzers in `-warnaserror` as the lint; there's no format check.
+  - R3 stays Partial until the release workflow has published.
+  - T8 is Partial because there's no end-to-end suite yet.
+- The recount after the edits, by section:
+
+  | Section | Meets | Partial | Gap | N/A |
+  |---|---|---|---|---|
+  | 1 | 28 | 5 | 3 | 12 |
+  | 2 | 22 | 7 | 11 | 11 |
+  | 3 | 28 | 6 | 10 | 14 |
+  | Total | 78 | 18 | 24 | 37 |
+
+  157 rows. The script listed the Gap rows left: S12, AC4.5, AC4.7; the error model, the 3 operations, `signOut` and AC2.4b; O2, R2, R4, T6, T7, D1, AC6.1, AC7.5, AC7.6 and AC7.8. Each section's totals got an "After Phase 1" paragraph, and the whole-matrix table got an "After Phase 1" column.
+- `docs/validation/gap-report.md`: a new section, "Status after Phase 1 (0.1.0)", before section 1. It lists each gap as closed, partly closed or documented, gives the counts above, and names what's still open. Sections 1 to 6 are unchanged, as the record of the validation.
+- `phases.md`: a Phase 1 status block. It says the work is in PR #1, notes Q5 and Q1b answered and the new counts, and records the two changes from the plan (the parity caller removed, and no `IsPackable` edits).
+- Style check of the added lines: no em dashes, no ` -- `, no bare product short form.

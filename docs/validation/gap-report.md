@@ -12,6 +12,41 @@ pinned by content:
 The project was originally built against spec v0.5. Line numbers below refer to the pinned
 `spec.md`.
 
+## Status after Phase 1 (0.1.0)
+
+Phase 1 of [phases.md](../../phases.md), on 2026-11-04. Sections 1 to 6 below are the validation
+as it was done; this section says what has changed since. The matrix rows Phase 1 changed carry
+"**Phase 1:**" in their evidence.
+
+| Gap | Now | How |
+|---|---|---|
+| G1 discovery issuer | Closed | A discovery document whose `issuer` isn't `Authority` exactly is refused, for sign-in, logout tokens and API tokens |
+| G2 `sub`-only tolerance | Closed | The store applies the validator's 2-minute clock tolerance |
+| G7 `Scopes` default | Documented | Kept as `openid profile email`, with the reason in the README |
+| G8 unsupported keys | Closed | The README maps all 31 spec keys |
+| G9 startup validation | Closed | `IValidateOptions` with `ValidateOnStart()`; also refuses weakened PKCE, nonce and token validation settings (threat review 01.4) |
+| G10 CI | Partly closed | A PR builder builds, tests and packs on every pull request (R1, T8 unit half, D6, AC7.7). The parity check (R2) was added, then removed by the author's decision not to use its labels |
+| G11 release and package | Partly closed | Package metadata, `LICENSE` and `net10.0` (K1, K2). The release workflow exists; R3 is Partial until it publishes 0.1.0 |
+| G13 spec version and docs site | Partly closed | The README names spec v0.8 (L7, AC1.1). The docs site page (D1, AC6.1) is Phase 5 |
+| G14 layers | Closed | The README names the layers covered and the recorded deviation |
+
+**Partial rows:**
+- T1 and AC7.1 are Meets, and so are D5, AC6.5 and BCL-8.
+- T2 and AC7.2 stay Partial. The delegated ID token checks are now pinned; state comparison and the storage default are still untested.
+- S1, S2, S11 and AC3.3 stay Partial, with what ASP.NET Core leaves to the app now documented in the README's "Running in production" section.
+
+**Still open:** G3 (revoking sign-out), G4 (refresh), G5 (error model), G6 (operations), G12
+(end-to-end suite), G15 (embedded mode), R2 (parity check), and the docs site page from G13.
+
+| Section | Rows | Meets | Partial | Gap | N/A |
+|---|---|---|---|---|---|
+| 1. Security floor and back-channel logout | 48 | 28 | 5 | 3 | 12 |
+| 2. Client surface, configuration, framework integration, errors | 51 | 22 | 7 | 11 | 11 |
+| 3. Layering, packaging, modes, CI and release, testing, docs and samples | 58 | 28 | 6 | 10 | 14 |
+| **Total** | **157** | **78** | **18** | **24** | **37** |
+
+Recounted by script from the matrix rows.
+
 ## 1. Classification
 
 The spec requires this decision before anything else ("Applying this specification", step 2,

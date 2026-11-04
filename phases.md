@@ -44,6 +44,17 @@ publish waits for Q5.
 **Goal:** anyone can install the package from NuGet, it builds and tests on every pull request,
 and the small security gaps are closed.
 
+**Status (2026-11-04):** the work is done and in pull request #1; 0.1.0 isn't published yet.
+- Q5 and Q1b were answered: yes to the package ID, and no threat model entries for the cookie
+  session.
+- The matrix is updated: 78 Meets, 18 Partial, 24 Gap, 37 N/A (gap report, "Status after
+  Phase 1").
+- Two changes from the plan below:
+  - The parity check caller was removed, by the author's decision not to use its labels, so R2
+    stays a Gap.
+  - The samples needed no `IsPackable=false`; the web SDK already sets it, and CI packs the
+    library project only.
+
 **Before writing code:**
 - Ask the maintainers the two open questions (gap report, section 5):
   - **Q5.** May a community package use the ID `ThunderID.AspNetCore` on NuGet? If ThunderID
