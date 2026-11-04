@@ -7,6 +7,9 @@ sends an OIDC back-channel logout.
 Requires .NET 10.
 
 ```csharp
+using ThunderID.AspNetCore;
+using ThunderID.AspNetCore.BackchannelLogout;
+
 // Web app
 builder.Services.AddThunderID(options =>
 {

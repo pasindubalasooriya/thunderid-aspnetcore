@@ -26,7 +26,7 @@ as it was done; this section says what has changed since. The matrix rows Phase 
 | G8 unsupported keys | Closed | The README maps all 31 spec keys |
 | G9 startup validation | Closed | `IValidateOptions` with `ValidateOnStart()`; also refuses weakened PKCE, nonce and token validation settings (threat review 01.4) |
 | G10 CI | Partly closed | A PR builder builds, tests and packs on every pull request (R1, T8 unit half, D6, AC7.7). The parity check (R2) was added, then removed by the author's decision not to use its labels |
-| G11 release and package | Partly closed | Package metadata, `LICENSE` and `net10.0` (K1, K2). The release workflow exists; R3 is Partial until it publishes 0.1.0 |
+| G11 release and package | Closed | Package metadata, `LICENSE` and `net10.0` (K1, K2). The release workflow published 0.1.0 from tag `v0.1.0` with trusted publishing (R3) |
 | G13 spec version and docs site | Partly closed | The README names spec v0.8 (L7, AC1.1). The docs site page (D1, AC6.1) is Phase 5 |
 | G14 layers | Closed | The README names the layers covered and the recorded deviation |
 
@@ -42,8 +42,8 @@ as it was done; this section says what has changed since. The matrix rows Phase 
 |---|---|---|---|---|---|
 | 1. Security floor and back-channel logout | 48 | 28 | 5 | 3 | 12 |
 | 2. Client surface, configuration, framework integration, errors | 51 | 22 | 7 | 11 | 11 |
-| 3. Layering, packaging, modes, CI and release, testing, docs and samples | 58 | 28 | 6 | 10 | 14 |
-| **Total** | **157** | **78** | **18** | **24** | **37** |
+| 3. Layering, packaging, modes, CI and release, testing, docs and samples | 58 | 29 | 5 | 10 | 14 |
+| **Total** | **157** | **79** | **17** | **24** | **37** |
 
 Recounted by script from the matrix rows.
 

@@ -789,3 +789,66 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
 - `docs/validation/gap-report.md`: a new section, "Status after Phase 1 (0.1.0)", before section 1. It lists each gap as closed, partly closed or documented, gives the counts above, and names what's still open. Sections 1 to 6 are unchanged, as the record of the validation.
 - `phases.md`: a Phase 1 status block. It says the work is in PR #1, notes Q5 and Q1b answered and the new counts, and records the two changes from the plan (the parity caller removed, and no `IsPackable` edits).
 - Style check of the added lines: no em dashes, no ` -- `, no bare product short form.
+- Committed as `2b161cf` and pushed. PR builder: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41826717948, pass. `gh pr view 1`: `MERGEABLE`, `CLEAN`, 11 commits.
+- `[YOU]`: you approved the squash merge.
+- `gh pr merge 1 --squash --subject "Prepare the 0.1.0 NuGet release" --body "" --delete-branch` produced `0e02c3a` on `main`.
+  - Its tree, `4bb90c05...`, is the same as `2b161cf`'s, so `main` holds exactly what was reviewed.
+  - The commit body is empty.
+  - `git ls-remote --heads origin phase-1` is empty, so the branch is deleted. I pruned the stale local tracking ref.
+- The PR builder, on the push to `main`: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41827535484, pass.
+- Release dry run, `gh workflow run release.yml --ref main`: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41827646036. It succeeded on `0e02c3a`.
+  - Checkout, Set up .NET, Check the Version, Build, Test and Pack: success.
+  - Log in to NuGet, Publish to NuGet and Create the GitHub Release: **skipped**.
+  - From the log: "Version: 0.1.0", "0 Warning(s)", "Passed: 120", and both 0.1.0 packages created.
+- Nothing was published: the nuget.org flat container for `thunderid.aspnetcore` gives 404, `gh release list` is empty, and there are no tags.
+- Seen in passing, out of scope: `gh api .../dependabot/alerts` says "Dependabot alerts are disabled for this repository". The version updates from `dependabot.yml` don't depend on alerts.
+
+### Step 12: Publish 0.1.0 (2026-11-04)
+
+- `[YOU]`: "publish".
+- `git tag v0.1.0 0e02c3a` (the merge commit, which is `origin/main`), then `git push origin v0.1.0`.
+- Release run: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41828692549. It succeeded on `0e02c3a`, with every step a success, the three publishing steps included. From the log:
+  - "Successfully exchanged OIDC token for NuGet API key." The key shows as `NUGET_API_KEY: ***`.
+  - "Pushing ThunderID.AspNetCore.0.1.0.nupkg to 'https://www.nuget.org/api/v2/package'... Created ... Your package was pushed."
+  - "Pushing ThunderID.AspNetCore.0.1.0.snupkg to 'https://www.nuget.org/api/v2/symbolpackage'... Created ... Your package was pushed." So the symbols package went with the `.nupkg`, as documented; now observed.
+  - `gh release create` produced https://github.com/pasindubalasooriya/thunderid-aspnetcore/releases/tag/v0.1.0. It's not a draft or a prerelease, and has assets `ThunderID.AspNetCore.0.1.0.nupkg` (23,764 bytes) and `.snupkg` (18,155 bytes).
+- **Surprise:** right after the push, you saw the package under nuget.org's "Unlisted Packages", and the package page said "This package has not been indexed yet". That's the normal state between validation and indexing; nothing was changed.
+- Indexing, as polled:
+  - About 8 minutes after the push, the flat container returned `{"versions": ["0.1.0"]}`.
+  - About 1 minute after that, the registration returned 200: version 0.1.0, `listed: True`, `published: 2026-11-04T12:22:45.417+00:00`. Search for `packageid:ThunderID.AspNetCore` gave 1 hit.
+- Records, uncommitted, for the follow-up PR:
+  - R3 moved to Meets with this run as evidence. Section 3 is now 29 Meets and 5 Partial; the whole matrix is 79 Meets, 17 Partial, 24 Gap, 37 N/A, recounted by script.
+  - The gap report's G11 is closed. The `phases.md` status says 0.1.0 is published.
+  - The Step 11 lines above give the counts as they were before this step.
+
+### Step 13: Install from nuget.org and sign in (2026-11-04)
+
+- ThunderID, started on your request: `.\start.ps1` in `thunderid-main\target\dist\thunderid-1.0.0-win-x64\`, as a background task of mine. "ThunderID Server started" in 540 ms. Discovery returns 200, issuer `https://localhost:8090`, `backchannel_logout_supported: True`; the console returns 200.
+- Fresh app, in scratch `fromnuget/`: `dotnet new webapp -f net10.0`.
+  - `dotnet nuget list source`, run in that folder, shows only nuget.org and the Visual Studio offline folder, which holds no ThunderID package. Before the install, `%USERPROFILE%\.nuget\packages\thunderid.aspnetcore` didn't exist.
+  - `dotnet add package ThunderID.AspNetCore --version 0.1.0`: "GET https://api.nuget.org/v3-flatcontainer/thunderid.aspnetcore/0.1.0/thunderid.aspnetcore.0.1.0.nupkg", then "Installed ThunderID.AspNetCore 0.1.0 from https://api.nuget.org/v3/index.json". `.nupkg.metadata` records `"source": "https://api.nuget.org/v3/index.json"`, and `project.assets.json` resolves `ThunderID.AspNetCore/0.1.0`.
+  - Wired up with the README snippet: `AddThunderID`, `UseAuthentication`, `MapThunderIDBackchannelLogout`, and `/Privacy` requiring sign-in. The app uses the sample's `UserSecretsId`, and its HTTPS profile is `https://localhost:7101`. `dotnet build`: 0 warnings, 0 errors.
+- **Friction:** the package README's snippet has no `using` lines, and `ImplicitUsings` doesn't add `ThunderID.AspNetCore` or `ThunderID.AspNetCore.BackchannelLogout`. I added them, as the sample does. It's a docs fix for a later patch.
+- `ThunderID:ClientId` set by me to the ID you gave (not a secret). `dotnet user-secrets list`, key names only: `ThunderID:ClientSecret`, `ThunderID:ClientId`.
+- The run: "Now listening on: https://localhost:7101"; the home page returns 200.
+- **Failure:** `/Privacy` returns 500. The OIDC handler's PAR request (`POST /oauth2/par`) got a 401 from ThunderID: `invalid_client`, "Invalid client credentials", thrown in `OpenIdConnectHandler.PushAuthorizationRequest`.
+  - The same client passed PAR earlier in this project with `client_secret_post` (Step 4 and Step 7 of the original build, above).
+  - So the client ID and secret pair is the likely cause: the stored secret doesn't match the client.
+  - Not checked by me: I don't read secret values.
+- My mistake: the PowerShell line meant to raise the authentication log level (`$env:Logging__LogLevel__Microsoft.AspNetCore.Authentication`) failed, because of the dots in the name. It doesn't affect the result; the default logging showed the error.
+- `[YOU]`: in the ThunderID console, you set a matching secret for the client, and stored it with `dotnet user-secrets set "ThunderID:ClientSecret" ... --project samples/WebApp`.
+- Restarted the app. `/Privacy` returned 302 to `https://localhost:8090/oauth2/authorize?client_id=WItzJCtJA0Ij77xkgHIjKg&request_uri=...`, so PAR was accepted.
+- `[YOU]`: you signed in in the browser and saw "Signed in with ThunderID.AspNetCore 0.1.0 from nuget.org".
+- App log: "AuthenticationScheme: OpenIdConnect was challenged", then "AuthenticationScheme: Cookies signed in". No `fail:` lines.
+- **Phase 1 exit criteria met:**
+  - 0.1.0 is on nuget.org, published by `release.yml`;
+  - installed from nuget.org into a fresh `dotnet new webapp`, it signs in against a local ThunderID;
+  - the matrix is updated.
+
+### Step 14: Follow-up PR (2026-11-04)
+
+- Branch `phase-1-records`, from `main` (`0e02c3a`). It carries the Steps 11 to 13 records, written after PR #1's merge.
+  - The R3, G11 and `phases.md` updates from Step 12.
+  - The README fix: `using ThunderID.AspNetCore;` and `using ThunderID.AspNetCore.BackchannelLogout;` added to the code snippet in `README.md` and `src/ThunderID.AspNetCore/README.md`.
+- Check of the fix: the full `README.md` snippet, with its usings and wrapped in a minimal `Program.cs`, was compiled in scratch `snippetcheck/` against the nuget.org 0.1.0 package. `dotnet build`: 0 warnings, 0 errors.
+- No tag and no new version. nuget.org shows the old package README until the next release.

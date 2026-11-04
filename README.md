@@ -41,6 +41,9 @@ recorded deviation from the specification's layering rule; see the
 | `ILogoutSessionStore` | Where ended sessions are kept. In memory by default; register your own to replace it. |
 
 ```csharp
+using ThunderID.AspNetCore;
+using ThunderID.AspNetCore.BackchannelLogout;
+
 // Web app
 builder.Services.AddThunderID(options =>
 {
