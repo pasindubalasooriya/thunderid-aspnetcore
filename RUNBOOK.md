@@ -677,3 +677,19 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
   - README: 0 em dashes, 0 `--` in prose, no bare product short form; every relative link and anchor resolves (`docs/backchannel-logout.png`, `docs/validation/gap-report.md`, `#configuration`, `#limits`, `FRICTION-LOG.md`, `RUNBOOK.md`).
   - `dotnet build`: 0 warnings. `dotnet test`: 120 passed.
 - `tests/ThunderID.AspNetCore.Tests/LogoutTokens.cs` still uses the same string as `ClientId`, as the audience of test tokens shaped like ThunderID's. It isn't a credential; left as is.
+- Committed as `adb213f` "Document configuration and production notes, and drop the sample client ID".
+
+### Step 7: Packaging (2026-11-04)
+
+- `LICENSE`: the Apache License 2.0 text, copied from ThunderID's own `LICENSE` (`git show upstream/main:LICENSE`, 201 lines, SHA-1 `7df05959...`, the same for both files).
+- Library csproj: `PackageId`, `Version` 0.1.0, `Authors` Pasindu Balasooriya, `Description`, `PackageTags`, `PackageLicenseExpression` Apache-2.0, `PackageProjectUrl`, `RepositoryUrl`, `RepositoryType`, `PublishRepositoryUrl`, `PackageReadmeFile`, `IncludeSymbols` with `snupkg`, and `ContinuousIntegrationBuild` when `GITHUB_ACTIONS` is `true`. New package README `src/ThunderID.AspNetCore/README.md`, with absolute links only.
+- Before: `dotnet pack` produced `ThunderID.AspNetCore.1.0.0.nupkg`, the default version.
+- **Deviation from the plan:** I added `IsPackable=false` to both samples, then reverted it. `dotnet msbuild -getProperty:IsPackable` already gives `false` for them (the web SDK), and the warning "This project cannot be packaged because packaging has been disabled" comes from packing the whole solution, for every non-packable project that isn't a test project. The fix is to pack the library project only: `dotnet pack src/ThunderID.AspNetCore`, which CI will use.
+- `dotnet pack src/ThunderID.AspNetCore -c Release`: `ThunderID.AspNetCore.0.1.0.nupkg` (23,823 bytes) and `.snupkg` (18,328 bytes), no warnings.
+  - nupkg files: `ThunderID.AspNetCore.nuspec`, `README.md`, `lib/net10.0/ThunderID.AspNetCore.dll`, plus the package metadata.
+  - nuspec: id, version 0.1.0, authors, license expression Apache-2.0, readme, projectUrl, description, tags, repository (git, url, branch, commit); dependencies JwtBearer and OpenIdConnect `10.0.14`; frameworkReference `Microsoft.AspNetCore.App`.
+  - snupkg: `lib/net10.0/ThunderID.AspNetCore.pdb`. Its Source Link map points at `https://raw.githubusercontent.com/pasindubalasooriya/thunderid-aspnetcore/<commit>/*`.
+  - The released package must be built by CI from a pushed commit, or the Source Link URLs won't resolve.
+- Install check, scratch `installcheck/app`: `dotnet new webapp`; a `nuget.config` with the local pack folder and nuget.org; `dotnet add package ThunderID.AspNetCore --version 0.1.0`; `AddThunderID` and `MapThunderIDBackchannelLogout` added to `Program.cs`. `dotnet build`: 0 warnings, 0 errors. `obj/project.assets.json`: `ThunderID.AspNetCore/0.1.0`.
+- **Cache cleanup:** the install put the local 0.1.0 into `%USERPROFILE%\.nuget\packages\thunderid.aspnetcore\0.1.0`. A later install "from nuget.org" (Step 13) would silently reuse it, so I deleted that folder (it was created by this check). `ls` afterwards: no such directory.
+- `dotnet test`: 120 passed.

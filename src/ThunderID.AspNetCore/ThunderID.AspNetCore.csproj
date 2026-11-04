@@ -6,6 +6,23 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <PackageId>ThunderID.AspNetCore</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Pasindu Balasooriya</Authors>
+    <Description>Sign users in to ASP.NET Core apps with ThunderID, protect APIs with ThunderID access tokens, and end sessions on OIDC back-channel logout.</Description>
+    <PackageTags>thunderid;openid-connect;oidc;oauth2;authentication;aspnetcore;backchannel-logout</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/pasindubalasooriya/thunderid-aspnetcore</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/pasindubalasooriya/thunderid-aspnetcore</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
@@ -13,6 +30,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>
