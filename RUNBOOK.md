@@ -594,3 +594,11 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
 - `dotnet build` (SDK 10.0.403): 0 warnings, 0 errors. `dotnet test`: "Passed! Failed: 0, Passed: 87" on net10.0. No code change needed (assumption A2 holds).
 - Transitive IdentityModel: 8.19.2. `dotnet list package --vulnerable --include-transitive`: none in all 4 projects.
 - `git diff --stat`: the 4 csproj files, 8 insertions and 8 deletions, plus `global.json`.
+
+### Step 3: Clock tolerance for `sub`-only logout, G2 (2026-11-04)
+
+- `LogoutTokenValidator.DefaultClockSkew` (2 minutes), a new public field, is now the single default for the validator and for `InMemoryLogoutSessionStore`, which gains an optional `clockSkew` parameter. A `sub`-only logout now ends a session when `authTime <= iat + clockSkew` (was `authTime < iat`). The boundary is inclusive: the spec says "within the clock tolerance after it", and ending the session is the safe side. The plan had written `<`.
+- `ILogoutSessionStore.IsSessionEndedAsync` doc comment states the tolerance rule, for custom stores.
+- **Surprise: two existing tests encoded the old rule, not one as planned.** `InMemoryLogoutSessionStoreTests.Sub_only_logout_leaves_a_later_sign_in_alone` (kept sessions at `iat` and `iat`+5 s) became `Sub_only_logout_ends_sessions_that_began_within_the_clock_tolerance` (Theory: +0, +30, +119, +120 s are ended) and `Sub_only_logout_leaves_a_sign_in_after_the_clock_tolerance_alone` (+121 s kept). `BackchannelLogoutEndpointTests.Sub_only_logout_refuses_earlier_sessions_and_keeps_a_later_sign_in` moved its "later" sign-in from `iat`+5 s to `iat`+121 s, and gained a session at `iat`+60 s that must be refused. New: `Sub_only_logout_uses_the_configured_clock_tolerance` (30 s: +30 ended, +31 kept).
+- `dotnet build`: 0 warnings, 0 errors. `dotnet test`: "Passed! Failed: 0, Passed: 92" (87, minus 1 replaced, plus 4 theory cases and 2 facts).
+- Mutation, in a scratch copy made with `git ls-files`: back to `authTime.Value < logout.IssuedAt` gives "Failed! Failed: 6, Passed: 86": the 4 theory cases, the configured-tolerance test, and the endpoint test.

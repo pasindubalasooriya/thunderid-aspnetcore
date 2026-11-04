@@ -15,6 +15,11 @@ public sealed class LogoutTokenValidator
 {
     public const string BackchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout";
 
+    /// <summary>
+    /// Clock tolerance for token lifetimes, and for the sessions a <c>sub</c>-only logout ends.
+    /// </summary>
+    public static readonly TimeSpan DefaultClockSkew = TimeSpan.FromMinutes(2);
+
     // A logout token is a few hundred bytes. Anything far larger is not one.
     internal const int MaxTokenLength = 8 * 1024;
 
@@ -39,7 +44,7 @@ public sealed class LogoutTokenValidator
         ArgumentException.ThrowIfNullOrEmpty(clientId);
         _configurationManager = configurationManager;
         _clientId = clientId;
-        _clockSkew = clockSkew ?? TimeSpan.FromMinutes(2);
+        _clockSkew = clockSkew ?? DefaultClockSkew;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 

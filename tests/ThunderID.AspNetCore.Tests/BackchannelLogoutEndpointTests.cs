@@ -284,11 +284,13 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
     {
         var (client, _) = await StartAsync();
         var before = await SignInAsync(client, "sid-before", LogoutTokens.IssuedAt - 600);
-        var after = await SignInAsync(client, "sid-after", LogoutTokens.IssuedAt + 5);
+        var withinTolerance = await SignInAsync(client, "sid-within", LogoutTokens.IssuedAt + 60);
+        var after = await SignInAsync(client, "sid-after", LogoutTokens.IssuedAt + 121);
 
         await client.PostAsync("/backchannel-logout", Form(LogoutTokens.Create((_, p) => p.Remove("sid"))));
 
         Assert.Equal("anonymous", await WhoAmIAsync(client, before));
+        Assert.Equal("anonymous", await WhoAmIAsync(client, withinTolerance));
         Assert.Equal("sid-after", await WhoAmIAsync(client, after));
     }
 

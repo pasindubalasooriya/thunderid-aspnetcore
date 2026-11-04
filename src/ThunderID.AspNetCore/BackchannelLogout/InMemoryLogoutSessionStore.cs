@@ -11,9 +11,14 @@ public sealed class InMemoryLogoutSessionStore : ILogoutSessionStore
     private readonly Dictionary<string, (DateTimeOffset IssuedAt, DateTimeOffset Expires)> _subjectLogouts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _seenJwtIds = new(StringComparer.Ordinal);
     private readonly TimeSpan _retention;
+    private readonly TimeSpan _clockSkew;
     private readonly TimeProvider _timeProvider;
 
-    public InMemoryLogoutSessionStore(TimeSpan retention, TimeProvider? timeProvider = null)
+    /// <param name="clockSkew">
+    /// How long after a <c>sub</c>-only logout's <c>iat</c> a session can begin and still be ended,
+    /// since the two clocks may disagree. Defaults to <see cref="LogoutTokenValidator.DefaultClockSkew"/>.
+    /// </param>
+    public InMemoryLogoutSessionStore(TimeSpan retention, TimeProvider? timeProvider = null, TimeSpan? clockSkew = null)
     {
         if (retention <= TimeSpan.Zero)
         {
@@ -21,6 +26,7 @@ public sealed class InMemoryLogoutSessionStore : ILogoutSessionStore
         }
 
         _retention = retention;
+        _clockSkew = clockSkew ?? LogoutTokenValidator.DefaultClockSkew;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -69,7 +75,7 @@ public sealed class InMemoryLogoutSessionStore : ILogoutSessionStore
             if (subject is not null && _subjectLogouts.TryGetValue(subject, out var logout) && logout.Expires > now)
             {
                 // A session with no known start time is treated as older than the logout.
-                return Task.FromResult(authTime is null || authTime.Value < logout.IssuedAt);
+                return Task.FromResult(authTime is null || authTime.Value <= logout.IssuedAt + _clockSkew);
             }
 
             return Task.FromResult(false);
