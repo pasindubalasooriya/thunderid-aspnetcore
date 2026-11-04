@@ -712,3 +712,20 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
   - The workflow's commands, run locally in order: restore is up to date; the build gives 0 warnings and 0 errors; the tests give 120 passed; the pack gives the `0.1.0` nupkg and snupkg in `artifacts/`, which is git-ignored and deleted afterwards.
   - No em dashes and no bare product short form in `.github/`.
 - Not pushed. The first real run is Step 9.
+
+### Step 9: Push the branch and open the PR (2026-11-04)
+
+- `git push -u origin phase-1`: 8 commits, `5fd775f` to `e84d740`.
+- `gh pr create --base main --head phase-1 --title "Prepare the 0.1.0 NuGet release"`: https://github.com/pasindubalasooriya/thunderid-aspnetcore/pull/1
+- **Deviation from the plan, your decision:** the labels `parity/prs-raised` and `parity/prs-not-needed` were not created.
+  - The shared parity check reads only those two labels, and fails a pull request until one of them is on it.
+  - It adds `parity/prs-not-needed` itself only to bot pull requests, such as Dependabot's.
+  - So on a person's pull request, without the labels, the check stays red. It doesn't block a merge unless branch protection requires it, and none is set.
+- First PR builder run: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41823076901, "🔨 Build, Test & Pack", pass in 41 s. From the job log:
+  - "No vulnerable packages."
+  - "0 Warning(s)", "0 Error(s)"
+  - "Passed! - Failed: 0, Passed: 120, Skipped: 0, Total: 120"
+  - "Successfully created package .../artifacts/ThunderID.AspNetCore.0.1.0.nupkg", and the same for `.snupkg`.
+  - No warning or error annotations.
+- The parity check didn't run, as expected: `pull_request_target` runs the copy on `main`, and there isn't one yet.
+- **Then, your decision:** remove `.github/workflows/parity-check.yml`. Without the labels it could never pass on a person's pull request. The spec matrix's R2 row (the parity check as a required check) stays a Gap; Step 11 records it, and drops the follow-up PR that was to watch the parity check.
