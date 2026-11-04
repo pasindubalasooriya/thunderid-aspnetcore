@@ -403,3 +403,169 @@ Deferred at your request ("il record later"). The [ME] part (matching the WebApp
   - "or an admin ending her session" removed: no admin session-revocation action was found or tested (`TerminateBySubject` is only called from a flow executor).
   - ML-DSA (blog and README): "Microsoft.IdentityModel can't verify ML-DSA" was wrong. `Microsoft.IdentityModel.Tokens` 8.19.2 includes `ML-DSA-44/65/87` (via `Microsoft.Bcl.Cryptography`). Now stated as untested.
 - Added `docs/blog/video.md`: recording guide (Snipping Tool or OBS, since Game Bar records one window only), clip list, demo steps, GIF steps, restart commands, and the voiceover script with a source for each fact.
+
+## SDK validation (from 2026-11-03)
+
+Validating this project against ThunderID's SDK Development skill, `docs-internals/sdk-development/spec.md` and `threat-model.md`, after a maintainer invited it to become a community SDK. Plan: `~/.claude/plans/how-do-we-make-adaptive-liskov.md`.
+
+### Step 0: Preflight (2026-11-03)
+
+- `upstream/main` is now `818626a78` (the plan pinned `fc8b081fd`). The new commits don't touch the inputs: the blobs are identical at both commits.
+
+  | File | Blob |
+  |---|---|
+  | `.agent/skills/sdk-development/SKILL.md` | `e6ff61266aba206b8a991113c8000328c3dbb3e4` |
+  | `docs-internals/sdk-development/spec.md` (v0.8, Draft) | `64c9b697a3a7501ef7ad866e4354e3e6368250c5` |
+  | `docs-internals/sdk-development/threat-model.md` | `233ecf650f86320998cb3d0540478290da44b458` |
+
+  The scratchpad snapshots hash to the same blobs. The validation pins the **content** by these blob hashes, not by commit.
+- `~/.claude/skills/sdk-development` doesn't exist yet.
+- `thunderid-aspnetcore`: clean, `main` at `d524d97`, in sync with `origin/main`. `dotnet build`: 0 warnings, 0 errors. `dotnet test`: 87 passed, 0 failed.
+- The ThunderID clone is still on `add-mobile-number-library-attribute`, with only `?? frontend/apps/console/src/features/`. Untouched.
+- Tooling note: with `MSYS_NO_PATHCONV=1` set (needed for `git show <rev>:<path>`), Git Bash also stops converting `/c/...` file paths for `git.exe`, so `git hash-object /c/...` fails. Use relative or Windows paths.
+
+### Step 1: Install the skill globally (2026-11-03)
+
+- Installed with:
+  ```bash
+  export MSYS_NO_PATHCONV=1
+  mkdir -p "C:/Users/pasin/.claude/skills/sdk-development"
+  git -C C:/Users/pasin/Documents/Academics/Thunder/thunderid show upstream/main:.agent/skills/sdk-development/SKILL.md > "C:/Users/pasin/.claude/skills/sdk-development/SKILL.md"
+  ```
+  The source was `upstream/main` `818626a78`. The content is unchanged: nothing was added inside the file.
+- Verified: `git hash-object SKILL.md` = `e6ff61266aba206b8a991113c8000328c3dbb3e4`, identical to the upstream blob. 289 lines, 14,658 bytes. The frontmatter has `name: sdk-development` and `allowed-tools: Read Write Edit Bash WebFetch`.
+- **To update later:** run `git -C <thunderid> fetch upstream`, then the same `git show` command. Compare the hash with `git rev-parse upstream/main:.agent/skills/sdk-development/SKILL.md`.
+- Pending: your confirmation that it appears in a new session.
+
+### Step 2: Classification (2026-11-03)
+
+- Wrote section 1 of `docs/validation/gap-report.md`, comparing Reading A (Framework Specific SDK for ASP.NET Core) with Reading B (integration package), with spec lines.
+- Evidence for A: back-channel handling is defined for "Framework Specific SDKs built on [Node]" (`spec.md:469-470`) and exposed "as a request handler in its framework's idiom" (`:479-481`). The server-side sample shape (`:889-891`) matches `samples/Api`.
+- Evidence against B: an integration "MUST delegate every protocol operation to a ThunderID SDK" and "MUST NOT implement OAuth 2.0 or OIDC logic" (`:207-208`). There's no .NET ThunderID SDK, and `LogoutTokenValidator` is OIDC logic.
+- Deviation under A: there's no ThunderID parent layer (`:179`, `:189`), and it isn't among the permitted deviations (`:146-153`).
+- Decision (you, 2026-11-03): **Reading A**.
+
+### Step 3: Security floor and back-channel logout (2026-11-03)
+
+- Scope: `spec.md:661-765` (Security requirements), `:482-516` (back-channel handler requirements), R4 (AC4.x) and R9 (AC9.x). Written to `docs/validation/spec-matrix.md` section 1.
+- Probes: a throwaway clone of `d524d97` at `<scratchpad>/probe`, with `tests/ThunderID.AspNetCore.Tests/ProbeTests.cs`. They aren't in the repo. Run with `dotnet test tests/ThunderID.AspNetCore.Tests --filter "FullyQualifiedName~ProbeTests" --logger "console;verbosity=detailed"`. All 9 probe cases ran; the first P1 run failed on a bug in my probe code (it assumed `response_mode` would be present), which I fixed and reran.
+
+  | Probe | Output (trimmed) |
+  |---|---|
+  | P1 PKCE/state | `code_challenge_method=S256 code_challenge.length=43 challenge==S256(verifier): True`; `verifier.length=43 unreserved-only=True`; `state.length=390 nonce.length=62 response_mode=(absent)`; the two challenges have different state and verifier |
+  | P2 state mismatch | `state='garbage'`: `AuthenticationFailureException: Unable to unprotect the message.State.`; `state=''`: `message.State is null or empty`. No session cookie |
+  | P3 settings | `UsePkce=True RequireHttpsMetadata=True ResponseMode=query SaveTokens=True PAR=UseIfAvailable`; TVP `ValidateIssuer/Audience/Lifetime=True RequireSignedTokens=True ValidIssuer=(null, uses discovery issuer)`; `RequireNonce=True`; cookie `HttpOnly=True SecurePolicy=SameAsRequest SameSite=Lax ExpireTimeSpan=14d Sliding=True SessionStore=(null)` |
+  | P4 HTTPS | `http://idp.example.com` and `http://localhost:8090`: `InvalidOperationException: The MetadataAddress or Authority must use HTTPS...` at configuration time. `https://idp.example.com`: accepted |
+  | P5 issuer | `Authority=https://localhost:8090, discovery issuer=https://evil.example: configuration ACCEPTED`. Logout token `iss=https://evil.example`: valid. `iss=https://localhost:8090`: `issuer does not match` |
+  | P6 sub-only | logout `iat`=T: sessions from T-60s and T-1s ended (ok); T+0s, T+30s, T+119s **not ended** (spec: ended); T+121s and T+600s not ended (ok) |
+  | P7 handler | sid and sub-only tokens: `200`, no `Location`, `Cache-Control: no-store`, no `Set-Cookie`. Outbound: only `GET /.well-known/openid-configuration` and `GET /oauth2/jwks` |
+- Every test name cited in the matrix was checked to exist in `tests/` (none missing).
+- Totals, counted from the table: 48 rows, 22 Meets, 6 Partial, 7 Gap, 13 N/A. I first wrote 51 rows by hand, which was wrong, and corrected it from the count.
+- Gaps: `sub`-only clock tolerance (BCL-3b, AC9.2); discovery issuer not pinned to `Authority` (S7, AC4.8); no token refresh (AC4.7, S12); sign-out doesn't revoke before clearing local state (AC4.5, S12).
+- Exploitability check (skill §5): no finding is exploitable unmitigated. S7 needs an attacker able to serve the authority's discovery document over HTTPS, so the gap is hardening, not an open vulnerability. Safe to keep in the repo.
+
+### Step 4: Client surface, configuration, framework integration, errors (2026-11-04)
+
+- Scope: `spec.md:291-360` (Configuration), `:361-481` (Client surface, back-channel operation contract), `:547-562` (Framework integration), `:630-660` (Error model), R2 and R3, and the skill's §4 "Naming and surface", "Behaviour" and "Errors" lists. Written to `docs/validation/spec-matrix.md` section 2.
+- Probes P8 to P13 were added to the same scratch clone (not the repo), and run with `--filter "FullyQualifiedName~ProbeTests.P8|...P13"`. Two runs failed on my probe code: a missing `using Microsoft.Extensions.Logging;`, and a Python rewrite of P12 that turned `'\n'` into a real line break. Both were fixed and rerun. The first P12 version set all six parameters at once, and threw on `code_challenge`; that was a real result, so I split it into one case per parameter.
+
+  | Probe | Output (trimmed) |
+  |---|---|
+  | P8 config timing | Empty `ClientId`: `ArgumentException: The value cannot be an empty string. (Parameter 'ClientId')`. Empty `Authority`: `InvalidOperationException: Provide Authority, MetadataAddress, Configuration, or ConfigurationManager...`. `not a url`: `InvalidOperationException: ...must use HTTPS...`. All three **at the first challenge request**, none at `AddThunderID`, `Build` or `StartAsync`. Outbound calls before the failure: 0 |
+  | P9 sign-out, no session | `status 302, Location https://localhost:8090/oauth2/logout, params=post_logout_redirect_uri,state,x-client-SKU,x-client-ver, id_token_hint present=False`. No exception. Outbound calls: 0 |
+  | P10 error shape | Failed callback raised `Microsoft.AspNetCore.Authentication.AuthenticationFailureException`; `has Code property: False, has Origin property: False`, `Data` empty; message doesn't contain the code. Back-channel: `400 {"error":"invalid_request","error_description":"logout_token is invalid"}` |
+  | P11 logs | 41 lines at Trace; 3 contain the code: `Information Microsoft.AspNetCore.Hosting.Diagnostics: Request starting HTTP/1.1 GET http://localhost/signin-oidc?code=<CODE>&state=garbage`, the matching `Request finished` line, and `Trace ...OpenIdConnectHandler: MessageReceived: '?code=<CODE>&state=garbage'` |
+  | P12 SDK-owned parameters | Caller `state`: sent once, caller's value not used (SDK's wins). Caller `code_challenge`, `code_challenge_method`, `client_id`, `redirect_uri`: sign-in request threw `ArgumentException: An item with the same key has already been added. Key: <name>`. Control `login_hint`: sent once, caller's value |
+  | P13 second context | Second `AddThunderID`: `InvalidOperationException: Scheme already exists: Cookies` |
+- Corrections to section 1, made in place: AC4.1b went from N/A to Partial (P12). AC4.6's wording now says the HTTPS rule fires when options are first resolved, which in an app is the first sign-in (P8). AC4.11 and AC4.12 keep N/A, with evidence added. Section 1 recounted by script: 48 rows, 22 Meets, 7 Partial, 7 Gap, 12 N/A.
+- Section 2 counted by script: 51 rows, 12 Meets (2 delegated), 14 Partial, 16 Gap, 9 N/A. My first hand count of the mapping table said 7 Gap; the table has 6, corrected before writing.
+- Every `file:line` cited in section 2 was checked against the source listing.
+- Exploitability check (skill §5): nothing new is exploitable. P12 fails closed (the caller's value is never sent). P11 is the S11 finding already recorded.
+- Questions added for the gap report: Q3, which client surface operations apply to a server-side SDK (`isLoading`, and framework verbs instead of named operations). Q4, whether `AddThunderIDApi` and `AddScopePolicy` need the cross-SDK parity process.
+
+### Step 5: Layering, packaging, modes, CI and release, testing, docs and samples (2026-11-04)
+
+- Scope: `spec.md:177-242` (layering, integration packages, packaging), `:243-289` (operational modes), `:801-819` (repository, CI, release), `:821-866` (testing), `:868-892` (docs and samples), R1, R5 to R8. Written to `docs/validation/spec-matrix.md` section 3.
+- Repo facts (`git ls-files`, `git tag` at `d524d97`): no `.github/`, no `LICENSE`, 0 tags. The csproj has only `TargetFramework net9.0` and the two `9.0.20` package references, with no NuGet metadata. `upstream/main:docs/content` has no .NET page.
+- Read along the way: `ShortNonceProtocolValidator.cs:20` sets `RequireStateValidation = false`. That's ASP.NET Core's own default for its validator (the handler checks `state` itself through Data Protection), and P2 already showed a bad `state` is refused. Not a finding.
+- .NET support date: .NET 8 and .NET 9 reach end of support on **2026-11-10**, and .NET 10 is supported to 2028-11-10 (https://devblogs.microsoft.com/dotnet/dotnet-8-9-end-of-support/). Microsoft's lifecycle page still shows the older May 2026 date; the blog announcing the 24-month STS window supersedes it.
+- Mutation runs in the scratch clone (one line changed, the 87 repo tests run with `--filter "FullyQualifiedName!~ProbeTests"`, the line restored with `git checkout`):
+
+  | Mutation | File | Result |
+  |---|---|---|
+  | M1 `UsePkce = false` | `ThunderIDAuthenticationExtensions.cs` | Failed: 1 |
+  | M2 ID token `ValidateIssuer = false` | same | **Passed: 87** (not caught) |
+  | M3 ID token `ValidateAudience = false` | same | **Passed: 87** (not caught) |
+  | M4 `RequireNonce = false` | `ShortNonceProtocolValidator.cs` | **Passed: 87** (not caught) |
+  | M5 logout `ValidTypes = null` | `LogoutTokenValidator.cs` | Failed: 4 |
+  | M6 logout `ValidateIssuer = false` | same | Failed: 3 |
+  | M7 logout `ValidateLifetime = false` | same | Passed: 87, but **equivalent mutant**: the custom `LifetimeValidator` delegate runs whatever `ValidateLifetime` says, so expiry was still checked. My mistake in choosing it |
+  | M7b `LifetimeValidator` returns `true` | same | Failed: 2 (`Expired_token_is_rejected`, `Missing_exp_is_rejected`) |
+  | M8 no `Cache-Control: no-store` | `BackchannelLogoutEndpoint.cs` | Failed: 4 |
+  | M9 `MapInboundClaims = true` (first occurrence) | `ThunderIDAuthenticationExtensions.cs` | Failed: 1 |
+
+  After the runs, `git status` in the clone showed only the untracked `ProbeTests.cs`.
+- Line citations: I first wrote 37 spec line numbers in section 3 from memory of the section layout, and most were off by 2 to 8 lines. I checked them against `grep -n` on the pinned `spec.md` and corrected all of them by script before appending (0 misses). README `:133` was corrected to `:134`.
+- Section 3 counted by script and checked by hand: 58 rows, 14 Meets (1 delegated), 8 Partial, 22 Gap, 14 N/A; no empty Status cells.
+- Whole matrix recounted by script: 157 rows, 48 Meets, 29 Partial, 45 Gap, 35 N/A. All 67 acceptance criteria are present (64 numbered plus three `b` variants; the plan said 64).
+- Not done: a line-by-line mapping of all 143 MUST lines. Coverage is by section, with every AC checked by script; a MUST line inside a covered section may share a row with others.
+- Exploitability check (skill §5): nothing in this step is exploitable. M2 to M4 are missing tests of delegated checks, not missing checks (P3 shows them on).
+
+### Step 6: Threat model review (2026-11-04)
+
+- Scope: `threat-model.md` (blob `233ecf6`) interactions 01 to 07 (`:140-520`), the Security Review Checklist (`:522-580`) and the residual risks (`:581-611`), plus the four questions in skill section 5. Written to `docs/validation/threat-model-review.md`. Reuses the Step 3 to 5 matrix rows as evidence.
+- Applies: 01, 02, 04 (the path where the app holds the token), 05, 06. N/A: 03 and 07 (no embedded mode).
+- **Correction to rows already written (Step 3 and Step 4):** I printed the code behind every `file:line` citation in `spec-matrix.md` (script `cites.py` in the scratchpad). Five were wrong and are now fixed:
+
+  | Row | Was | Now |
+  |---|---|---|
+  | S11 | `BackchannelLogoutCookieValidator.cs:303` (the file has 47 lines) | `:40` |
+  | BCL-3b | `InMemoryLogoutSessionStore.cs:239` (97 lines) | `:72` |
+  | BCL-5 | `BackchannelLogoutCookieValidator.cs:299-306` | `:36-43` |
+  | E8 | `LogoutTokenValidator.cs:50-55` (the empty-token check) | `:53-56` (the size check) |
+  | C5, AC2.2, O2 | `README.md:170-171` | `:169-170` |
+
+  Rerun after the fix: every citation points at the code it describes, and none is past the end of its file. In Step 5 I had checked only the spec line numbers, not the code ones.
+- Probe P14 (scratch clone, `ProbeTests.cs`): sign-in with an 8,000-character token set, then sign-out with those cookies.
+
+  ```
+  P14 sign-in set 4 cookies: .AspNetCore.Cookies(28 chars), .AspNetCore.CookiesC1(4017 chars), .AspNetCore.CookiesC2(4017 chars), .AspNetCore.CookiesC3(3174 chars)
+     attributes of .AspNetCore.Cookies: path=/;samesite=lax;httponly
+     (the same for C1, C2 and C3)
+  P14 sign-out: status 302, Location https://localhost:8090/oauth2/logout, id_token_hint present=True
+     Set-Cookie: .AspNetCore.Cookies value-empty=True expires-1970=True
+     (the same for C1, C2 and C3)
+  P14 every issued cookie cleared: True; outbound calls (a revocation would appear here): 0
+  ```
+
+  The first run didn't compile: I'd left out `using Microsoft.AspNetCore.Authentication;`. Added, then it ran.
+- Other checks, read-only:
+  - `dotnet list package --vulnerable --include-transitive`: "has no vulnerable packages given the current sources" for all 4 projects.
+  - Secrets in history: `git rev-list --all` gives 1 commit. Added lines matching a secret or password assignment with a value: only `options.ClientSecret = "secret";` (`AddThunderIDTests.cs:19`) and `"unused"` (`BackchannelLogoutEndpointTests.cs:37`), both test fixtures. JWT-shaped strings in added lines: 0.
+  - `AddThunderIDApi` sets no `OnMessageReceived`, so the API reads bearer tokens from the `Authorization` header only.
+  - Store bounds: `Prune` (`InMemoryLogoutSessionStore.cs:79`) runs on every recorded logout (`:32`). A `jti` is kept until the token's `exp` plus 5 minutes (`:54`).
+- Not in the model: ASP.NET Core's cookie is self-contained, so a copy taken before sign-out stays valid until it expires (14 days, sliding). It's closed when back-channel logout is registered, because ThunderID notifies the app that initiated sign-out too (build "Step 6: Profile page and sign-out", logout token #2) and the `sid` is then refused (build "Step 11"). Recorded in section 3 of the review.
+- Not measured: whether ThunderID issues this client a refresh token (the default scopes have no `offline_access`). No record has one.
+- Threat rows recounted by script: 30 (28 table rows, plus 03 and 07 as one row each). 13 Mitigated (including delegated), 5 Partial, 1 Gap (05.1, no revocation), 8 N/A, 3 Residual. My hand count first said 33 rows, 6 Partial and 10 N/A; corrected before recording.
+- Exploitability check (skill section 5): nothing exploitable without a precondition the model already treats as out of scope or residual. S7 needs control of the authority's HTTPS endpoint. The cookie copy needs a stolen cookie, is standard ASP.NET Core behaviour, and is closed by back-channel logout.
+
+### Step 7: Gap report (2026-11-04)
+
+- `docs/validation/gap-report.md` sections 2 to 6 added: summary and totals, 15 gaps by priority (G1 to G4 security, G5 to G9 surface, G10 to G15 maturity) with effort and the Partial rows to close alongside, a suggested order, the 35 N/A rows by reason, questions Q1 to Q4, and method and limits.
+- Correction to section 1 (Step 2): the threat model was listed as "not versioned"; its change log says 0.3.
+- Matrix recounted by script from the file: 157 rows, 48 Meets, 29 Partial, 45 Gap, 35 N/A, by section 48/51/58. The report's tables use these numbers.
+- Report checked by script against the matrix: all 45 Gap rows appear in the gap tables (9 security, 16 surface, 20 maturity, each once), all 35 N/A rows appear in section 4, every `spec-matrix.md#...` link resolves to a heading, no em dashes, no bare product short form.
+- Final state: `dotnet test` gives "Passed! Failed: 0, Passed: 87". `git status --short`: `M FRICTION-LOG.md`, `M RUNBOOK.md`, `?? docs/validation/`. `git diff --stat`: 156 insertions, 0 deletions. No library, sample or test code changed.
+- The draft reply to the maintainer is in the scratchpad, not in the repository. Its link works only once `docs/validation/` is pushed.
+
+### Decisions on Q1 to Q4, and the release phases (2026-11-04)
+
+- `phases.md` added: six phases, each ending in a NuGet release, with a wait of at least two weeks between them.
+- Answers (gap report, section 5): Q1, the deviation is acceptable. Q2, yes, a replayed `jti` keeps `400`. Q3, match a server-side framework SDK; the framework's idioms are acceptable; the spec wasn't written for server SDKs, so there's room to adapt. Q4, `AddThunderIDApi` and `AddScopePolicy` are acceptable, with cross-SDK parity followed when possible.
+- Q3 read concretely from ThunderID's server SDKs, `thunder-id/javascript-sdks` at `f25c3526a` (2026-11-03), via `gh api`: `packages/node/src/ThunderIDNodeClient.ts`, `packages/express/src/ThunderIDExpressClient.ts`, `packages/express/src/index.ts`, `packages/javascript/src/ThunderIDJavaScriptClient.ts`.
+  - Implemented: `initialize`, `reInitialize` and `getConfiguration` (inherited), `signIn`, `signOut`, `isSignedIn`, `getAccessToken`, `refreshAccessToken`, `revokeAccessToken`, `exchangeToken`, `decodeJwtToken` (inherited), `setSession`, `clearSession`, `getUser`, `handleBackchannelLogout`, and an embedded flow (Express `handleFlow`).
+  - Stubs that throw "Method not implemented", not overridden by Node: `isLoading`, `signUp`, `getUserProfile`, `updateUserProfile`. `getUserSchema` doesn't exist.
+  - Node's `signOut` returns the end-session URL and doesn't revoke. Kept G3 as a gap anyway: revocation before clearing local state is in the spec's security floor.
+- Rows changed by script (22 rows; `apply_decisions.py` in the scratchpad), each with the decision quoted in its evidence cell. Matrix recounted: 157 rows, 58 Meets, 22 Partial, 40 Gap, 37 N/A (was 48, 29, 45, 35). By section: 23/6/7/12, 19/8/13/11, 16/8/20/14. Threat review: 14 Mitigated, 4 Partial (01.3 accepted).
+- Gap report re-checked by script: all 40 Gap rows in the gap tables, all 37 N/A rows in section 4, every matrix link resolves. G7 closed (only the `Scopes` default remains, as Partial C2). G6 shrank to `reInitialize`, `exchangeToken`, `decodeJwtToken`. G14 is L2 only. G15 applies.
+- Still open: Q1b (threat model entries for Data Protection and the cookie session) and Q5 (the NuGet package ID).
