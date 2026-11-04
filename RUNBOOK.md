@@ -572,7 +572,7 @@ Validating this project against ThunderID's SDK Development skill, `docs-interna
 
 ## Phase 1: First NuGet release (0.1.0)
 
-Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one commit per step, one squash-merged PR. Maintainer answers before starting: Q5 yes (the NuGet ID `ThunderID.AspNetCore` may be used), Q1b no (no threat model entries for the cookie session). Author decisions: keep the `openid profile email` default and document it; Authors `Pasindu Balasooriya`; Apache-2.0.
+Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one commit per step, one squash-merged PR. Answers before starting (who answered is not recorded): Q5 yes (the NuGet ID `ThunderID.AspNetCore` may be used), Q1b no (no threat model entries for the cookie session). Author decisions: keep the `openid profile email` default and document it; Authors `Pasindu Balasooriya`; Apache-2.0.
 
 ### Step 0: Preflight (2026-11-04)
 
@@ -655,3 +655,25 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
   - 7 web app and 4 API weakened settings, each through `PostConfigure`, fail with "ThunderID: <setting>".
 - `dotnet build`: 0 warnings. `dotnet test`: "Passed! Failed: 0, Passed: 120".
 - Mutations from the validation, each in a fresh scratch copy (each patch asserts its target is unique): M2 (ID token `ValidateIssuer = false`), M3 (`ValidateAudience = false`) and M4 (`RequireNonce = false`) each give "Failed! Failed: 30, Passed: 90". At the end of Step 5 of the validation, all three passed all 87 tests.
+- Committed as `ff08768` "Validate configuration at startup and refuse weakened security settings".
+
+### Step 6: Samples and README (2026-11-04)
+
+- `samples/WebApp/appsettings.json`: `ThunderID:ClientId` is now `""` (it was the author's test client ID). `CallApi` shows and calls `BillingUrl`, built from `BillingApi:BaseUrl`, instead of a fixed `https://localhost:7102`.
+- README:
+  - new "Install" (`dotnet add package`, .NET 10, `0.x` note, spec v0.8, layers and the recorded deviation);
+  - "Configuration" (the startup checks, the exact issuer match, default scopes and why, and every spec configuration key mapped to what the package does);
+  - "Running in production" (Data Protection keys, callback request logging, back-channel logout ending copied cookies, a shared store);
+  - prerequisite now .NET 10;
+  - ThunderID note now names v1.1.0 (`gh release list`: v1.1.0, 2026-11-02, is the latest, and `git merge-base --is-ancestor` shows neither back-channel commit, `8fdea9d44` or `4c52caab4`, in v1.1.0 or v1.0.2);
+  - the `ClientId` default row; 120 tests;
+  - JWE limit names "a client configured for ID token encryption".
+- The spec key list came from the pinned `spec.md` table (31 keys), not from memory.
+- **Correction:** my first README draft said the deviation was "accepted by the ThunderID maintainers". Who answered Q1 isn't recorded, so that was unverified. The README now calls it a recorded deviation and links to the gap report. The same assumption was in the plan's context ("The maintainer answered") and in this section's header line ("Maintainer answers"); both are corrected.
+- Checks:
+  - `ThunderID__ClientId=""` (overriding user-secrets) gives "Hosting failed to start ... ArgumentException: The value cannot be an empty string. (Parameter 'ClientId')".
+  - **Surprise:** with your user-secrets alone, the same failure. Your secrets file (`%APPDATA%\Microsoft\UserSecrets\a8f0f903-...\secrets.json`, key names read only) holds `ThunderID:ClientSecret` but not `ThunderID:ClientId`, which used to come from `appsettings.json`. `[YOU]`, before running the sample: `dotnet user-secrets set "ThunderID:ClientId" "<client id>" --project samples/WebApp`.
+  - With `ThunderID__ClientId` set for one run: "Now listening on: https://127.0.0.1:7199", "Application started".
+  - README: 0 em dashes, 0 `--` in prose, no bare product short form; every relative link and anchor resolves (`docs/backchannel-logout.png`, `docs/validation/gap-report.md`, `#configuration`, `#limits`, `FRICTION-LOG.md`, `RUNBOOK.md`).
+  - `dotnet build`: 0 warnings. `dotnet test`: 120 passed.
+- `tests/ThunderID.AspNetCore.Tests/LogoutTokens.cs` still uses the same string as `ClientId`, as the audience of test tokens shaped like ThunderID's. It isn't a credential; left as is.
