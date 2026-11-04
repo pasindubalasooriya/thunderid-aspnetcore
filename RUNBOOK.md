@@ -729,3 +729,31 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
   - No warning or error annotations.
 - The parity check didn't run, as expected: `pull_request_target` runs the copy on `main`, and there isn't one yet.
 - **Then, your decision:** remove `.github/workflows/parity-check.yml`. Without the labels it could never pass on a person's pull request. The spec matrix's R2 row (the parity check as a required check) stays a Gap; Step 11 records it, and drops the follow-up PR that was to watch the parity check.
+
+### Step 10: Release workflow (2026-11-04)
+
+- `.github/workflows/release.yml`: runs when a `v*` tag is pushed, or by hand (`workflow_dispatch`).
+  - It publishes only on a tag push (`PUBLISH: ${{ github.event_name == 'push' }}`), so a manual run is always a dry run.
+  - **Deviation from the plan:** the plan had a `dry-run` input, but a manual run can be started on a tag ref, and an input set to false would then publish. A manual run that never publishes is safer, and needs no input.
+- Permissions: the workflow has `contents: read`. The job has `contents: write`, for `gh release create`, and `id-token: write`, for NuGet trusted publishing.
+- The steps, in order:
+  1. Checkout with `fetch-depth: 0`, so `origin/main` is there to check against, and with `persist-credentials: false`.
+  2. Set up .NET from `global.json`.
+  3. Check the version, before anything is published. On a tag: the tag must equal `v` + the csproj `Version`, and the tagged commit must be on `main`. Always: `docs/release-notes/v<version>.md` must exist.
+  4. Build with `-warnaserror`, test, then pack the library.
+  5. Tag push only: log in with `NuGet/login` v1.2.0 (`8d196754b4036150537f80ac539e15c2f1028841`, a lightweight tag on a commit), with `user: ${{ vars.NUGET_USER }}`. Its inputs and its `NUGET_API_KEY` output were read from `action.yml` at that SHA.
+  6. `dotnet nuget push` the `.nupkg`, with `--skip-duplicate`. The `.snupkg` beside it is pushed too; that's NuGet's documented behaviour, not yet observed here.
+  7. `gh release create` with the artifacts, `--notes-file docs/release-notes/<tag>.md` and `--verify-tag`.
+- `docs/release-notes/v0.1.0.md`: the release notes. Every claim in them is in the README, or is covered by the startup and issuer tests.
+- The version check, extracted from the YAML and run with GitHub's variables set by hand:
+
+  | Case | Result |
+  |---|---|
+  | Tag `v0.1.0` on this branch's HEAD | "isn't on main", exit 1 |
+  | Tag `v0.2.0` | "doesn't match the project version 0.1.0", exit 1 |
+  | Tag `v0.1.0` on `origin/main` | exit 0, `VERSION=0.1.0` |
+  | A manual run | exit 0 |
+  | Release notes missing | exit 1 |
+
+- `release.yml` parses with `yaml.safe_load`; the three publishing steps all have `if: env.PUBLISH == 'true'`. No em dashes, and no bare product short form.
+- **Surprise:** the first `git add` refused `docs/releases/`; `.gitignore:26` (`[Rr]eleases/`, from the Visual Studio template, meant for build output) matches it. Renamed it to `docs/release-notes/` rather than change the ignore rules, and re-ran the missing-notes test against the new path.
