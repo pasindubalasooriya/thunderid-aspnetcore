@@ -569,3 +569,28 @@ Validating this project against ThunderID's SDK Development skill, `docs-interna
 - Rows changed by script (22 rows; `apply_decisions.py` in the scratchpad), each with the decision quoted in its evidence cell. Matrix recounted: 157 rows, 58 Meets, 22 Partial, 40 Gap, 37 N/A (was 48, 29, 45, 35). By section: 23/6/7/12, 19/8/13/11, 16/8/20/14. Threat review: 14 Mitigated, 4 Partial (01.3 accepted).
 - Gap report re-checked by script: all 40 Gap rows in the gap tables, all 37 N/A rows in section 4, every matrix link resolves. G7 closed (only the `Scopes` default remains, as Partial C2). G6 shrank to `reInitialize`, `exchangeToken`, `decodeJwtToken`. G14 is L2 only. G15 applies.
 - Still open: Q1b (threat model entries for Data Protection and the cookie session) and Q5 (the NuGet package ID).
+
+## Phase 1: First NuGet release (0.1.0)
+
+Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one commit per step, one squash-merged PR. Maintainer answers before starting: Q5 yes (the NuGet ID `ThunderID.AspNetCore` may be used), Q1b no (no threat model entries for the cookie session). Author decisions: keep the `openid profile email` default and document it; Authors `Pasindu Balasooriya`; Apache-2.0.
+
+### Step 0: Preflight (2026-11-04)
+
+- Repo: `main`, clean apart from the untracked root `*.log` files, 1 commit ahead of `origin/main` (`2a97f0c`).
+- `dotnet test` on net9.0: "Passed! Failed: 0, Passed: 87".
+- `gh api .../actions/permissions`: `{"enabled":true,"allowed_actions":"all","sha_pinning_required":false}`.
+- ThunderID `upstream/main` moved to `46a6afc35`, but `spec.md`, `threat-model.md` and `SKILL.md` are unchanged (blobs `64c9b69`, `233ecf6`, `e6ff612`), so no row needs re-judging.
+- Plan corrected: Step 9 had pointed to "Step 13" for the parity check follow-up; it's Step 11.
+
+### Step 1: .NET 10 SDK and nuget.org account (2026-11-04)
+
+- [YOU] installed the .NET 10 SDK and created the nuget.org account. `dotnet --list-sdks`: `9.0.318`, `10.0.403`.
+- nuget.org username `pasindudilshanbalasooriya`; `https://www.nuget.org/profiles/pasindudilshanbalasooriya` returns 200. The **Trusted Publishing** menu item is present, so assumption A1 holds and no API key is needed.
+
+### Step 2: Push, branch, retarget to .NET 10 (2026-11-04)
+
+- `git push origin main`: `d524d97..2a97f0c  main -> main`. Then `git switch -c phase-1`.
+- All 4 projects `net9.0` to `net10.0`. `Microsoft.AspNetCore.Authentication.JwtBearer`, `.OpenIdConnect`, `.TestHost` and `.OpenApi` (the Api sample also had it) `9.0.20` to `10.0.14`. New `global.json`: SDK `10.0.100`, `rollForward: latestFeature`.
+- `dotnet build` (SDK 10.0.403): 0 warnings, 0 errors. `dotnet test`: "Passed! Failed: 0, Passed: 87" on net10.0. No code change needed (assumption A2 holds).
+- Transitive IdentityModel: 8.19.2. `dotnet list package --vulnerable --include-transitive`: none in all 4 projects.
+- `git diff --stat`: the 4 csproj files, 8 insertions and 8 deletions, plus `global.json`.
