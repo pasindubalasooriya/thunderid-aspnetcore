@@ -1,0 +1,104 @@
+# Publishes the library to nuget.org when a version tag is pushed, with NuGet trusted publishing,
+# so no API key is stored in this repository. A manual run does everything except publish.
+#
+# Uses:
+#   OS: ubuntu-latest
+
+name: 🚀 Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  PUBLISH: ${{ github.event_name == 'push' }}
+
+jobs:
+  release:
+    name: 🚀 Build, Pack & Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: ⚙️ Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      # A version can't be reused on nuget.org, so everything that could stop the release is
+      # checked before anything is published.
+      - name: 🏷️ Check the Version
+        run: |
+          version=$(dotnet msbuild src/ThunderID.AspNetCore -getProperty:Version)
+          echo "Version: $version"
+          if [ "$PUBLISH" = "true" ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::The tag $GITHUB_REF_NAME doesn't match the project version $version."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::The tag $GITHUB_REF_NAME isn't on main."
+              exit 1
+            fi
+          fi
+          if [ ! -f "docs/release-notes/v$version.md" ]; then
+            echo "::error::Release notes docs/release-notes/v$version.md are missing."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: 🔨 Build
+        run: dotnet build --configuration Release -warnaserror
+
+      - name: 🧪 Test
+        run: dotnet test --no-build --configuration Release
+
+      - name: 📦 Pack
+        run: dotnet pack src/ThunderID.AspNetCore --no-build --configuration Release --output artifacts
+
+      - name: 🔑 Log in to NuGet
+        if: env.PUBLISH == 'true'
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      # The .snupkg next to the .nupkg is pushed with it.
+      - name: 🚀 Publish to NuGet
+        if: env.PUBLISH == 'true'
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: >
+          dotnet nuget push "artifacts/ThunderID.AspNetCore.$VERSION.nupkg"
+          --api-key "$NUGET_API_KEY"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: 📝 Create the GitHub Release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" artifacts/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "$GITHUB_REF_NAME"
+          --notes-file "docs/release-notes/$GITHUB_REF_NAME.md"
+          --verify-tag

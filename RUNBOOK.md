@@ -569,3 +569,223 @@ Validating this project against ThunderID's SDK Development skill, `docs-interna
 - Rows changed by script (22 rows; `apply_decisions.py` in the scratchpad), each with the decision quoted in its evidence cell. Matrix recounted: 157 rows, 58 Meets, 22 Partial, 40 Gap, 37 N/A (was 48, 29, 45, 35). By section: 23/6/7/12, 19/8/13/11, 16/8/20/14. Threat review: 14 Mitigated, 4 Partial (01.3 accepted).
 - Gap report re-checked by script: all 40 Gap rows in the gap tables, all 37 N/A rows in section 4, every matrix link resolves. G7 closed (only the `Scopes` default remains, as Partial C2). G6 shrank to `reInitialize`, `exchangeToken`, `decodeJwtToken`. G14 is L2 only. G15 applies.
 - Still open: Q1b (threat model entries for Data Protection and the cookie session) and Q5 (the NuGet package ID).
+
+## Phase 1: First NuGet release (0.1.0)
+
+Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one commit per step, one squash-merged PR. Answers before starting (who answered is not recorded): Q5 yes (the NuGet ID `ThunderID.AspNetCore` may be used), Q1b no (no threat model entries for the cookie session). Author decisions: keep the `openid profile email` default and document it; Authors `Pasindu Balasooriya`; Apache-2.0.
+
+### Step 0: Preflight (2026-11-04)
+
+- Repo: `main`, clean apart from the untracked root `*.log` files, 1 commit ahead of `origin/main` (`2a97f0c`).
+- `dotnet test` on net9.0: "Passed! Failed: 0, Passed: 87".
+- `gh api .../actions/permissions`: `{"enabled":true,"allowed_actions":"all","sha_pinning_required":false}`.
+- ThunderID `upstream/main` moved to `46a6afc35`, but `spec.md`, `threat-model.md` and `SKILL.md` are unchanged (blobs `64c9b69`, `233ecf6`, `e6ff612`), so no row needs re-judging.
+- Plan corrected: Step 9 had pointed to "Step 13" for the parity check follow-up; it's Step 11.
+
+### Step 1: .NET 10 SDK and nuget.org account (2026-11-04)
+
+- [YOU] installed the .NET 10 SDK and created the nuget.org account. `dotnet --list-sdks`: `9.0.318`, `10.0.403`.
+- nuget.org username `pasindudilshanbalasooriya`; `https://www.nuget.org/profiles/pasindudilshanbalasooriya` returns 200. The **Trusted Publishing** menu item is present, so assumption A1 holds and no API key is needed.
+
+### Step 2: Push, branch, retarget to .NET 10 (2026-11-04)
+
+- `git push origin main`: `d524d97..2a97f0c  main -> main`. Then `git switch -c phase-1`.
+- All 4 projects `net9.0` to `net10.0`. `Microsoft.AspNetCore.Authentication.JwtBearer`, `.OpenIdConnect`, `.TestHost` and `.OpenApi` (the Api sample also had it) `9.0.20` to `10.0.14`. New `global.json`: SDK `10.0.100`, `rollForward: latestFeature`.
+- `dotnet build` (SDK 10.0.403): 0 warnings, 0 errors. `dotnet test`: "Passed! Failed: 0, Passed: 87" on net10.0. No code change needed (assumption A2 holds).
+- Transitive IdentityModel: 8.19.2. `dotnet list package --vulnerable --include-transitive`: none in all 4 projects.
+- `git diff --stat`: the 4 csproj files, 8 insertions and 8 deletions, plus `global.json`.
+
+### Step 3: Clock tolerance for `sub`-only logout, G2 (2026-11-04)
+
+- `LogoutTokenValidator.DefaultClockSkew` (2 minutes), a new public field, is now the single default for the validator and for `InMemoryLogoutSessionStore`, which gains an optional `clockSkew` parameter. A `sub`-only logout now ends a session when `authTime <= iat + clockSkew` (was `authTime < iat`). The boundary is inclusive: the spec says "within the clock tolerance after it", and ending the session is the safe side. The plan had written `<`.
+- `ILogoutSessionStore.IsSessionEndedAsync` doc comment states the tolerance rule, for custom stores.
+- **Surprise: two existing tests encoded the old rule, not one as planned.** `InMemoryLogoutSessionStoreTests.Sub_only_logout_leaves_a_later_sign_in_alone` (kept sessions at `iat` and `iat`+5 s) became `Sub_only_logout_ends_sessions_that_began_within_the_clock_tolerance` (Theory: +0, +30, +119, +120 s are ended) and `Sub_only_logout_leaves_a_sign_in_after_the_clock_tolerance_alone` (+121 s kept). `BackchannelLogoutEndpointTests.Sub_only_logout_refuses_earlier_sessions_and_keeps_a_later_sign_in` moved its "later" sign-in from `iat`+5 s to `iat`+121 s, and gained a session at `iat`+60 s that must be refused. New: `Sub_only_logout_uses_the_configured_clock_tolerance` (30 s: +30 ended, +31 kept).
+- `dotnet build`: 0 warnings, 0 errors. `dotnet test`: "Passed! Failed: 0, Passed: 92" (87, minus 1 replaced, plus 4 theory cases and 2 facts).
+- Mutation, in a scratch copy made with `git ls-files`: back to `authTime.Value < logout.IssuedAt` gives "Failed! Failed: 6, Passed: 86": the 4 theory cases, the configured-tolerance test, and the endpoint test.
+
+### Step 4: Pin the discovery issuer, G1 (2026-11-04, in progress, uncommitted)
+
+- Correction to the Step 3 report: its commit is `b5b41e9`. The chat report said `ef1a8b9`, a hash I hadn't seen (the command output that would have shown it was cut off). It wasn't written to any file.
+- **First design failed to compile:** in IdentityModel 8.19.2, `ConfigurationManager<T>.ConfigurationValidator` isn't settable after construction (CS1061). Replaced with `IssuerPinnedConfigurationManager`, a decorator around whatever `IConfigurationManager` the OIDC and JWT bearer options end up with. It's installed by post-configures registered after `AddOpenIdConnect` and `AddJwtBearer`, and throws `DiscoveryIssuerMismatchException` when `issuer` isn't exactly `Authority`. `RequestRefresh` passes through, so the bounded JWKS re-fetch is unchanged. `ValidIssuer = Authority` set on both handlers.
+- `LogoutTokenValidator` turns the mismatch into a normal rejection: 400, "discovery document was rejected: its issuer is not the configured authority". Network failures still escape (500), so ThunderID retries those.
+- JWT bearer rethrows configuration failures rather than answering 401, so an API with a lying discovery document fails every request with the mismatch exception. That's fail-closed, the same as discovery being unreachable. The test asserts the exception and its message.
+- New `DiscoveryIssuerTests` (7): sign-in refused / redirects; logout token refused (400) / accepted (200); API token refused / accepted (200); exact comparison (`Authority + "/"` refused). Full suite: 99 passed.
+- **Surprise: the suite is intermittently failing, and that's pre-existing.**
+  - On this branch: 1 failing run in 25, then again at run 3. A different test each time, always an exact-reason assertion: `Token_for_another_client_is_rejected`, `Neither_sid_nor_sub_is_rejected`, `Invalid_token_is_400_with_reason_and_no_logout`, `Missing_jti_is_rejected`.
+  - Experiment A, scratch worktree of `5fd775f` (before Steps 3 and 4): 2 failing runs in 40. Pre-existing on .NET 10; not yet checked on net9.0.
+  - Experiment B, signing serialized with a lock: still 1 in 40, so the hypothesis "concurrent `SignData` on the shared test `RSA`" is not enough.
+  - Instrumented reason (scratch only): a correctly signed token was rejected with `IDX10511: Signature validation failed. Keys tried: RsaSecurityKey, KeyId: MT-DQ4FKOMHPyzw3pdRs_q8kxGkd1lezyLktNeNTv7w`. So under parallel tests, signature verification of a valid token sometimes fails.
+  - Experiment C (export the public key once) did not run: my patch script's sanity check expected 4 uses where 3 is correct, so it aborted before writing. The 80 runs that followed tested unpatched code (2 failures, including `DiscoveryIssuerTests.Api_token_is_refused_when_discovery_reports_another_issuer`) and prove nothing about C.
+  - My own instrumentation mistakes on the way: one version appended to every rejection reason and broke every exact assertion, and one heredoc failed on quoting. Neither touched the repo.
+- Scratch worktree `baseA` removed; `git worktree prune`; `git worktree list` shows only the repo.
+- Not done yet: the cause of the flake, the Step 4 mutation check, the commit.
+- Committed as `cba5527` "Pin the discovery issuer to the configured authority" (empty body, no trailer), before the flake investigation, at your request.
+
+### Step 4a: Intermittent test failures (2026-11-04)
+
+- Fresh scratch copy of `cba5527`, with logging added that records each rejection reason and exception without changing what `Describe` returns (`instrument2.py`; every edit asserts its target occurs exactly once, and the patched lines were read back before running).
+- Experiment C, the test helper exports each public key once and serializes signing: **0 failing runs in 80**.
+- Experiment D, export once only, no lock: **0 failing runs in 80** (the 80 runs went past the 10-minute command limit and finished in the background).
+- With Experiment B (lock only: 1 in 40), this places the cause in the test helper: `LogoutTokens.Configuration()` and `Jwks()` called `ExportParameters` on the shared private `RSA` on every call while parallel test classes signed with it, and the exported public key intermittently failed to verify a correctly signed token (`IDX10511`).
+- Not a library defect: the library never holds a private key or calls `ExportParameters`; it builds keys from ThunderID's JWKS.
+- Fix, in `tests/ThunderID.AspNetCore.Tests/LogoutTokens.cs` only: the public parameters of `SigningKey` and `OtherKey` are exported once into static fields.
+- Repo with the fix: **0 failing runs in 40**, 0 build warnings, "Passed! Failed: 0, Passed: 99".
+- Step 4 mutation, in a fresh scratch copy of the fixed tree: the issuer comparison replaced with `if (false)` gives "Failed! Failed: 4, Passed: 95". The 4 attack tests fail (`Sign_in_is_refused_...`, `Logout_token_is_refused_...`, `Api_token_is_refused_...`, `Issuer_comparison_is_exact`); the 3 control tests still pass.
+- Not checked: whether the flake also existed on net9.0, before this phase. It's moot now that the cause is found and fixed.
+- Committed as `99ca9a0` "Export test signing keys once to fix intermittent failures".
+
+### Step 5: Startup validation and the framework-setting guard (2026-11-04)
+
+- New `SettingsValidators.cs`: `OpenIdConnectSettingsValidator` and `JwtBearerSettingsValidator` (`IValidateOptions`, ThunderID's scheme only), registered with `ValidateOnStart()` for both schemes. Checks:
+  - `Authority` is an absolute https URL;
+  - `ClientId` (web app) and `Audience` (API) are present;
+  - `UsePkce` and `ResponseType = code` (web app);
+  - `ProtocolValidator.RequireNonce` (web app);
+  - `ValidateIssuer`, `ValidateAudience`, `ValidateLifetime` and `RequireSignedTokens` (both).
+  - Messages start with "ThunderID: " and name the setting, never its value.
+- Measured messages (throwaway scratch test):
+  - empty `Authority`: ASP.NET Core's `InvalidOperationException` "Provide Authority, MetadataAddress, Configuration, or ConfigurationManager";
+  - `http://` or `not a url`: ASP.NET Core's "must use HTTPS unless disabled ... RequireHttpsMetadata=false";
+  - empty `ClientId`: `ArgumentException` "(Parameter 'ClientId')";
+  - `UsePkce = false` through `PostConfigure`: `OptionsValidationException` "ThunderID: UsePkce must stay true; PKCE can't be turned off."
+  - So the basic errors come from ASP.NET Core's own validation. `ValidateOnStart` moves them from the first sign-in to `StartAsync`. The new validators catch the weakened settings, and an `http` authority when the app sets `RequireHttpsMetadata = false` (test `Http_authority_is_refused_even_when_aspnet_core_allows_it`).
+- New `StartupValidationTests` (21):
+  - valid web app and API start with 0 outbound calls;
+  - 4 web app and 3 API configuration errors fail at `StartAsync` with 0 outbound calls;
+  - 7 web app and 4 API weakened settings, each through `PostConfigure`, fail with "ThunderID: <setting>".
+- `dotnet build`: 0 warnings. `dotnet test`: "Passed! Failed: 0, Passed: 120".
+- Mutations from the validation, each in a fresh scratch copy (each patch asserts its target is unique): M2 (ID token `ValidateIssuer = false`), M3 (`ValidateAudience = false`) and M4 (`RequireNonce = false`) each give "Failed! Failed: 30, Passed: 90". At the end of Step 5 of the validation, all three passed all 87 tests.
+- Committed as `ff08768` "Validate configuration at startup and refuse weakened security settings".
+
+### Step 6: Samples and README (2026-11-04)
+
+- `samples/WebApp/appsettings.json`: `ThunderID:ClientId` is now `""` (it was the author's test client ID). `CallApi` shows and calls `BillingUrl`, built from `BillingApi:BaseUrl`, instead of a fixed `https://localhost:7102`.
+- README:
+  - new "Install" (`dotnet add package`, .NET 10, `0.x` note, spec v0.8, layers and the recorded deviation);
+  - "Configuration" (the startup checks, the exact issuer match, default scopes and why, and every spec configuration key mapped to what the package does);
+  - "Running in production" (Data Protection keys, callback request logging, back-channel logout ending copied cookies, a shared store);
+  - prerequisite now .NET 10;
+  - ThunderID note now names v1.1.0 (`gh release list`: v1.1.0, 2026-11-02, is the latest, and `git merge-base --is-ancestor` shows neither back-channel commit, `8fdea9d44` or `4c52caab4`, in v1.1.0 or v1.0.2);
+  - the `ClientId` default row; 120 tests;
+  - JWE limit names "a client configured for ID token encryption".
+- The spec key list came from the pinned `spec.md` table (31 keys), not from memory.
+- **Correction:** my first README draft said the deviation was "accepted by the ThunderID maintainers". Who answered Q1 isn't recorded, so that was unverified. The README now calls it a recorded deviation and links to the gap report. The same assumption was in the plan's context ("The maintainer answered") and in this section's header line ("Maintainer answers"); both are corrected.
+- Checks:
+  - `ThunderID__ClientId=""` (overriding user-secrets) gives "Hosting failed to start ... ArgumentException: The value cannot be an empty string. (Parameter 'ClientId')".
+  - **Surprise:** with your user-secrets alone, the same failure. Your secrets file (`%APPDATA%\Microsoft\UserSecrets\a8f0f903-...\secrets.json`, key names read only) holds `ThunderID:ClientSecret` but not `ThunderID:ClientId`, which used to come from `appsettings.json`. `[YOU]`, before running the sample: `dotnet user-secrets set "ThunderID:ClientId" "<client id>" --project samples/WebApp`.
+  - With `ThunderID__ClientId` set for one run: "Now listening on: https://127.0.0.1:7199", "Application started".
+  - README: 0 em dashes, 0 `--` in prose, no bare product short form; every relative link and anchor resolves (`docs/backchannel-logout.png`, `docs/validation/gap-report.md`, `#configuration`, `#limits`, `FRICTION-LOG.md`, `RUNBOOK.md`).
+  - `dotnet build`: 0 warnings. `dotnet test`: 120 passed.
+- `tests/ThunderID.AspNetCore.Tests/LogoutTokens.cs` still uses the same string as `ClientId`, as the audience of test tokens shaped like ThunderID's. It isn't a credential; left as is.
+- Committed as `adb213f` "Document configuration and production notes, and drop the sample client ID".
+
+### Step 7: Packaging (2026-11-04)
+
+- `LICENSE`: the Apache License 2.0 text, copied from ThunderID's own `LICENSE` (`git show upstream/main:LICENSE`, 201 lines, SHA-1 `7df05959...`, the same for both files).
+- Library csproj: `PackageId`, `Version` 0.1.0, `Authors` Pasindu Balasooriya, `Description`, `PackageTags`, `PackageLicenseExpression` Apache-2.0, `PackageProjectUrl`, `RepositoryUrl`, `RepositoryType`, `PublishRepositoryUrl`, `PackageReadmeFile`, `IncludeSymbols` with `snupkg`, and `ContinuousIntegrationBuild` when `GITHUB_ACTIONS` is `true`. New package README `src/ThunderID.AspNetCore/README.md`, with absolute links only.
+- Before: `dotnet pack` produced `ThunderID.AspNetCore.1.0.0.nupkg`, the default version.
+- **Deviation from the plan:** I added `IsPackable=false` to both samples, then reverted it. `dotnet msbuild -getProperty:IsPackable` already gives `false` for them (the web SDK), and the warning "This project cannot be packaged because packaging has been disabled" comes from packing the whole solution, for every non-packable project that isn't a test project. The fix is to pack the library project only: `dotnet pack src/ThunderID.AspNetCore`, which CI will use.
+- `dotnet pack src/ThunderID.AspNetCore -c Release`: `ThunderID.AspNetCore.0.1.0.nupkg` (23,823 bytes) and `.snupkg` (18,328 bytes), no warnings.
+  - nupkg files: `ThunderID.AspNetCore.nuspec`, `README.md`, `lib/net10.0/ThunderID.AspNetCore.dll`, plus the package metadata.
+  - nuspec: id, version 0.1.0, authors, license expression Apache-2.0, readme, projectUrl, description, tags, repository (git, url, branch, commit); dependencies JwtBearer and OpenIdConnect `10.0.14`; frameworkReference `Microsoft.AspNetCore.App`.
+  - snupkg: `lib/net10.0/ThunderID.AspNetCore.pdb`. Its Source Link map points at `https://raw.githubusercontent.com/pasindubalasooriya/thunderid-aspnetcore/<commit>/*`.
+  - The released package must be built by CI from a pushed commit, or the Source Link URLs won't resolve.
+- Install check, scratch `installcheck/app`: `dotnet new webapp`; a `nuget.config` with the local pack folder and nuget.org; `dotnet add package ThunderID.AspNetCore --version 0.1.0`; `AddThunderID` and `MapThunderIDBackchannelLogout` added to `Program.cs`. `dotnet build`: 0 warnings, 0 errors. `obj/project.assets.json`: `ThunderID.AspNetCore/0.1.0`.
+- **Cache cleanup:** the install put the local 0.1.0 into `%USERPROFILE%\.nuget\packages\thunderid.aspnetcore\0.1.0`. A later install "from nuget.org" (Step 13) would silently reuse it, so I deleted that folder (it was created by this check). `ls` afterwards: no such directory.
+- `dotnet test`: 120 passed.
+
+### Step 8: CI workflows (2026-11-04)
+
+- `.github/workflows/pr-builder.yml`: on pull requests, pushes to `main`, and `workflow_dispatch`. Top-level `permissions: contents: read`; checkout with `persist-credentials: false`. Steps: `setup-dotnet` from `global.json`, `dotnet restore`, the vulnerable-package check, `dotnet build --no-restore --configuration Release -warnaserror` (the solution, so the samples too), `dotnet test --no-build`, then `dotnet pack src/ThunderID.AspNetCore --no-build` (the library only; see Step 7).
+- Actions pinned by commit SHA. The tags were resolved with `gh api repos/<action>/git/ref/tags/<tag>`; both are lightweight tags pointing at commits.
+  - `actions/checkout` v7.0.1 (released 2026-07-20) is `3d3c42e5aac5ba805825da76410c181273ba90b1`.
+  - `actions/setup-dotnet` v6.0.0 (released 2026-07-16) is `a98b56852c35b8e3190ac28c8c2271da59106c68`. I didn't take v6.1.0, released 2026-11-03, one day before this step.
+  - The input names (`global-json-file`, `persist-credentials`) were read from each `action.yml` at the pinned SHA; both run on `node24`.
+- **Surprise:** `dotnet package list --vulnerable --include-transitive` exits 0 even when it finds a vulnerability. The workflow reads its `--format json` output in PowerShell and fails on any vulnerability, or on any `problems` entry, such as an audit source that can't be reached. So the check fails closed.
+  - Tested on this solution: "No vulnerable packages.", exit 0.
+  - Tested on a scratch project with `System.Text.Json` 8.0.4: `::error::System.Text.Json 8.0.4 (High): https://github.com/advisories/GHSA-8g4q-xg66-9fp4`, exit 1.
+  - Tested on a hand-written `problems` sample: exit 1. That sample matches the shape I expect from the CLI; I haven't seen the CLI emit it.
+- `.github/workflows/parity-check.yml`: `diff` against `thunder-id/javascript-sdks`'s `parity-check.yml` shows the files are identical. The reusable workflow takes optional `siblings` and `automation_authors` inputs; the defaults are right here, since the siblings are the four ThunderID SDK repos.
+- `.github/dependabot.yml`: `nuget` and `github-actions`, weekly.
+- Checks:
+  - actionlint isn't installed, so I used the plan's fallback: all three files parse with `yaml.safe_load`, and the triggers are as intended.
+  - The workflow's commands, run locally in order: restore is up to date; the build gives 0 warnings and 0 errors; the tests give 120 passed; the pack gives the `0.1.0` nupkg and snupkg in `artifacts/`, which is git-ignored and deleted afterwards.
+  - No em dashes and no bare product short form in `.github/`.
+- Not pushed. The first real run is Step 9.
+
+### Step 9: Push the branch and open the PR (2026-11-04)
+
+- `git push -u origin phase-1`: 8 commits, `5fd775f` to `e84d740`.
+- `gh pr create --base main --head phase-1 --title "Prepare the 0.1.0 NuGet release"`: https://github.com/pasindubalasooriya/thunderid-aspnetcore/pull/1
+- **Deviation from the plan, your decision:** the labels `parity/prs-raised` and `parity/prs-not-needed` were not created.
+  - The shared parity check reads only those two labels, and fails a pull request until one of them is on it.
+  - It adds `parity/prs-not-needed` itself only to bot pull requests, such as Dependabot's.
+  - So on a person's pull request, without the labels, the check stays red. It doesn't block a merge unless branch protection requires it, and none is set.
+- First PR builder run: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41823076901, "🔨 Build, Test & Pack", pass in 41 s. From the job log:
+  - "No vulnerable packages."
+  - "0 Warning(s)", "0 Error(s)"
+  - "Passed! - Failed: 0, Passed: 120, Skipped: 0, Total: 120"
+  - "Successfully created package .../artifacts/ThunderID.AspNetCore.0.1.0.nupkg", and the same for `.snupkg`.
+  - No warning or error annotations.
+- The parity check didn't run, as expected: `pull_request_target` runs the copy on `main`, and there isn't one yet.
+- **Then, your decision:** remove `.github/workflows/parity-check.yml`. Without the labels it could never pass on a person's pull request. The spec matrix's R2 row (the parity check as a required check) stays a Gap; Step 11 records it, and drops the follow-up PR that was to watch the parity check.
+
+### Step 10: Release workflow (2026-11-04)
+
+- `.github/workflows/release.yml`: runs when a `v*` tag is pushed, or by hand (`workflow_dispatch`).
+  - It publishes only on a tag push (`PUBLISH: ${{ github.event_name == 'push' }}`), so a manual run is always a dry run.
+  - **Deviation from the plan:** the plan had a `dry-run` input, but a manual run can be started on a tag ref, and an input set to false would then publish. A manual run that never publishes is safer, and needs no input.
+- Permissions: the workflow has `contents: read`. The job has `contents: write`, for `gh release create`, and `id-token: write`, for NuGet trusted publishing.
+- The steps, in order:
+  1. Checkout with `fetch-depth: 0`, so `origin/main` is there to check against, and with `persist-credentials: false`.
+  2. Set up .NET from `global.json`.
+  3. Check the version, before anything is published. On a tag: the tag must equal `v` + the csproj `Version`, and the tagged commit must be on `main`. Always: `docs/release-notes/v<version>.md` must exist.
+  4. Build with `-warnaserror`, test, then pack the library.
+  5. Tag push only: log in with `NuGet/login` v1.2.0 (`8d196754b4036150537f80ac539e15c2f1028841`, a lightweight tag on a commit), with `user: ${{ vars.NUGET_USER }}`. Its inputs and its `NUGET_API_KEY` output were read from `action.yml` at that SHA.
+  6. `dotnet nuget push` the `.nupkg`, with `--skip-duplicate`. The `.snupkg` beside it is pushed too; that's NuGet's documented behaviour, not yet observed here.
+  7. `gh release create` with the artifacts, `--notes-file docs/release-notes/<tag>.md` and `--verify-tag`.
+- `docs/release-notes/v0.1.0.md`: the release notes. Every claim in them is in the README, or is covered by the startup and issuer tests.
+- The version check, extracted from the YAML and run with GitHub's variables set by hand:
+
+  | Case | Result |
+  |---|---|
+  | Tag `v0.1.0` on this branch's HEAD | "isn't on main", exit 1 |
+  | Tag `v0.2.0` | "doesn't match the project version 0.1.0", exit 1 |
+  | Tag `v0.1.0` on `origin/main` | exit 0, `VERSION=0.1.0` |
+  | A manual run | exit 0 |
+  | Release notes missing | exit 1 |
+
+- `release.yml` parses with `yaml.safe_load`; the three publishing steps all have `if: env.PUBLISH == 'true'`. No em dashes, and no bare product short form.
+- **Surprise:** the first `git add` refused `docs/releases/`; `.gitignore:26` (`[Rr]eleases/`, from the Visual Studio template, meant for build output) matches it. Renamed it to `docs/release-notes/` rather than change the ignore rules, and re-ran the missing-notes test against the new path.
+- Committed as `e865b06` "Remove the parity check workflow" and `d3644b6` "Add the release workflow and the 0.1.0 release notes", then pushed to `phase-1`.
+- `gh variable set NUGET_USER --body pasindudilshanbalasooriya`; `gh variable list` shows it. The PR description no longer mentions the parity check, and now describes the release workflow.
+- PR builder on `d3644b6`: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41823851351, pass. "No vulnerable packages.", "0 Warning(s)", "Passed: 120".
+- `release.yml` can't run until it's on `main`: GitHub only offers manual runs for workflows on the default branch. The dry run is in Step 11, after the merge.
+- `[YOU]`: the nuget.org trusted publishing policy, pending.
+- `[YOU]`: you reported the trusted publishing policy created ("done"). Its first form showed "At least one valid glob pattern or package must be specified"; the package field takes `ThunderID.AspNetCore`.
+
+### Step 11: Update the records (2026-11-04)
+
+- First, a check of the recount script (`recount.py`, scratchpad): it reproduced the matrix's recorded totals before any edit, 58 Meets, 22 Partial, 40 Gap, 37 N/A. It counts each table row by the status in its second or third cell.
+- `docs/validation/spec-matrix.md`: 30 rows rewritten by script, each keeping its rule text and getting "**Phase 1:**" evidence (test names, code lines, README lines, the CI run). AC7.2 was also rewritten, with the same status and evidence as before. The rows, by new status:
+  - **Meets:** BCL-3b, AC9.2, S7, AC4.8, BCL-8, F2, C6, C5, L7, AC1.1, L2, AC1.4, D5, AC6.5, R1, D6, AC7.7, K2, T1, AC7.1. K1 stays Meets, now citing `net10.0`.
+  - **Partial:** R3 and T8 moved up from Gap. S1, S2, S11, AC3.3, C2, T2 and AC7.2 keep their status, with the documentation or new tests noted.
+  - **Gap:** R2 stays a Gap.
+- Judgement calls, stated in the rows:
+  - D5 is Meets because the remaining `localhost` values are configuration defaults, not code.
+  - R1 counts the .NET analyzers in `-warnaserror` as the lint; there's no format check.
+  - R3 stays Partial until the release workflow has published.
+  - T8 is Partial because there's no end-to-end suite yet.
+- The recount after the edits, by section:
+
+  | Section | Meets | Partial | Gap | N/A |
+  |---|---|---|---|---|
+  | 1 | 28 | 5 | 3 | 12 |
+  | 2 | 22 | 7 | 11 | 11 |
+  | 3 | 28 | 6 | 10 | 14 |
+  | Total | 78 | 18 | 24 | 37 |
+
+  157 rows. The script listed the Gap rows left: S12, AC4.5, AC4.7; the error model, the 3 operations, `signOut` and AC2.4b; O2, R2, R4, T6, T7, D1, AC6.1, AC7.5, AC7.6 and AC7.8. Each section's totals got an "After Phase 1" paragraph, and the whole-matrix table got an "After Phase 1" column.
+- `docs/validation/gap-report.md`: a new section, "Status after Phase 1 (0.1.0)", before section 1. It lists each gap as closed, partly closed or documented, gives the counts above, and names what's still open. Sections 1 to 6 are unchanged, as the record of the validation.
+- `phases.md`: a Phase 1 status block. It says the work is in PR #1, notes Q5 and Q1b answered and the new counts, and records the two changes from the plan (the parity caller removed, and no `IsPackable` edits).
+- Style check of the added lines: no em dashes, no ` -- `, no bare product short form.

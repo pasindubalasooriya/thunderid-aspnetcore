@@ -1,0 +1,77 @@
+# Builds, tests and packs the library on every pull request and on every push to main.
+#
+# Uses:
+#   OS: ubuntu-latest
+
+name: 👷🛠️ PR Builder
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test-pack:
+    name: 🔨 Build, Test & Pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: 📦 Restore
+        run: dotnet restore
+
+      - name: 🔍 Check for Vulnerable Packages
+        shell: pwsh
+        run: |
+          dotnet package list --vulnerable --include-transitive --format json > vulnerable.json
+          $report = Get-Content vulnerable.json -Raw | ConvertFrom-Json
+          if ($report.problems) {
+            $report.problems | ForEach-Object { Write-Output "::error::$($_.text)" }
+            exit 1
+          }
+          $hits = foreach ($project in $report.projects) {
+            foreach ($framework in $project.frameworks) {
+              foreach ($package in @($framework.topLevelPackages) + @($framework.transitivePackages)) {
+                foreach ($vulnerability in $package.vulnerabilities) {
+                  "$($package.id) $($package.resolvedVersion) ($($vulnerability.severity)): $($vulnerability.advisoryurl)"
+                }
+              }
+            }
+          }
+          if ($hits) {
+            $hits | ForEach-Object { Write-Output "::error::$_" }
+            exit 1
+          }
+          Write-Output "No vulnerable packages."
+
+      - name: 🔨 Build
+        run: dotnet build --no-restore --configuration Release -warnaserror
+
+      - name: 🧪 Test
+        run: dotnet test --no-build --configuration Release
+
+      # The samples and tests aren't packages, so only the library is packed.
+      - name: 📦 Pack
+        run: dotnet pack src/ThunderID.AspNetCore --no-build --configuration Release --output artifacts

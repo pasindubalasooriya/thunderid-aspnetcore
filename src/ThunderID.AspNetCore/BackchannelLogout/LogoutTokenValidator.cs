@@ -15,6 +15,11 @@ public sealed class LogoutTokenValidator
 {
     public const string BackchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout";
 
+    /// <summary>
+    /// Clock tolerance for token lifetimes, and for the sessions a <c>sub</c>-only logout ends.
+    /// </summary>
+    public static readonly TimeSpan DefaultClockSkew = TimeSpan.FromMinutes(2);
+
     // A logout token is a few hundred bytes. Anything far larger is not one.
     internal const int MaxTokenLength = 8 * 1024;
 
@@ -39,7 +44,7 @@ public sealed class LogoutTokenValidator
         ArgumentException.ThrowIfNullOrEmpty(clientId);
         _configurationManager = configurationManager;
         _clientId = clientId;
-        _clockSkew = clockSkew ?? TimeSpan.FromMinutes(2);
+        _clockSkew = clockSkew ?? DefaultClockSkew;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -55,16 +60,25 @@ public sealed class LogoutTokenValidator
             return LogoutTokenValidationResult.Invalid("logout_token is too large");
         }
 
-        var configuration = await _configurationManager.GetConfigurationAsync(cancellationToken);
-        var result = await _handler.ValidateTokenAsync(logoutToken, Parameters(configuration));
-
-        if (!result.IsValid && result.Exception is SecurityTokenSignatureKeyNotFoundException)
+        TokenValidationResult result;
+        try
         {
-            // The server may have rotated its keys. RequestRefresh is rate limited by the
-            // configuration manager, so a stream of unknown kids cannot force a fetch per request.
-            _configurationManager.RequestRefresh();
-            configuration = await _configurationManager.GetConfigurationAsync(cancellationToken);
+            var configuration = await _configurationManager.GetConfigurationAsync(cancellationToken);
             result = await _handler.ValidateTokenAsync(logoutToken, Parameters(configuration));
+
+            if (!result.IsValid && result.Exception is SecurityTokenSignatureKeyNotFoundException)
+            {
+                // The server may have rotated its keys. RequestRefresh is rate limited by the
+                // configuration manager, so a stream of unknown kids cannot force a fetch per request.
+                _configurationManager.RequestRefresh();
+                configuration = await _configurationManager.GetConfigurationAsync(cancellationToken);
+                result = await _handler.ValidateTokenAsync(logoutToken, Parameters(configuration));
+            }
+        }
+        catch (DiscoveryIssuerMismatchException)
+        {
+            // Nothing in a discovery document that names another issuer can be trusted, keys included.
+            return LogoutTokenValidationResult.Invalid("discovery document was rejected: its issuer is not the configured authority");
         }
 
         if (!result.IsValid)

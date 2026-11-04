@@ -32,7 +32,7 @@ public static class ThunderIDAuthenticationExtensions
             return new LogoutTokenValidator(oidc.ConfigurationManager!, oidc.ClientId!);
         });
 
-        return services
+        var builder = services
             .AddAuthentication(options =>
             {
                 options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -57,6 +57,7 @@ public static class ThunderIDAuthenticationExtensions
                 options.MapInboundClaims = false;
                 options.TokenValidationParameters.NameClaimType = "name";
                 options.TokenValidationParameters.RoleClaimType = "roles";
+                options.TokenValidationParameters.ValidIssuer = settings.Authority;
 
                 options.Scope.Add("email");
                 foreach (var scope in settings.Scopes)
@@ -79,6 +80,11 @@ public static class ThunderIDAuthenticationExtensions
                     return Task.CompletedTask;
                 };
             });
+
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, IssuerPinnedConfigurationManager.ForOpenIdConnect>();
+        services.AddSingleton<IValidateOptions<OpenIdConnectOptions>, OpenIdConnectSettingsValidator>();
+        services.AddOptions<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme).ValidateOnStart();
+        return builder;
     }
 
     /// <summary>
@@ -90,7 +96,7 @@ public static class ThunderIDAuthenticationExtensions
         var settings = new ThunderIDApiOptions();
         configure(settings);
 
-        return services
+        var builder = services
             .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
@@ -99,7 +105,13 @@ public static class ThunderIDAuthenticationExtensions
                 options.MapInboundClaims = false;
                 options.TokenValidationParameters.NameClaimType = "sub";
                 options.TokenValidationParameters.RoleClaimType = "roles";
+                options.TokenValidationParameters.ValidIssuer = settings.Authority;
             });
+
+        services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, IssuerPinnedConfigurationManager.ForJwtBearer>();
+        services.AddSingleton<IValidateOptions<JwtBearerOptions>, JwtBearerSettingsValidator>();
+        services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme).ValidateOnStart();
+        return builder;
     }
 
     // ThunderID releases only the attributes a user has. Without a "name" claim,

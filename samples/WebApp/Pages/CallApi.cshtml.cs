@@ -16,6 +16,7 @@ public class CallApiModel(IHttpClientFactory httpClientFactory, IConfiguration c
     public string? AccessTokenPayload { get; private set; }
     public int? MeStatusCode { get; private set; }
     public string? MeResponseBody { get; private set; }
+    public string BillingUrl => $"{configuration["BillingApi:BaseUrl"]}/billing";
 
     public async Task OnGetAsync()
     {
@@ -32,7 +33,7 @@ public class CallApiModel(IHttpClientFactory httpClientFactory, IConfiguration c
         }
 
         var client = httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"{configuration["BillingApi:BaseUrl"]}/billing");
+        using var request = new HttpRequestMessage(HttpMethod.Get, BillingUrl);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         using var response = await client.SendAsync(request);
 

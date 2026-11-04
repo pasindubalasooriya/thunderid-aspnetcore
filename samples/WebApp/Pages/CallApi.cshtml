@@ -5,7 +5,7 @@
 }
 
 <h1>Call the billing API</h1>
-<p><code>GET https://localhost:7102/billing</code> with the access token ThunderID issued at sign-in.</p>
+<p><code>GET @Model.BillingUrl</code> with the access token ThunderID issued at sign-in.</p>
 
 @if (Model.BillingStatusCode is null)
 {

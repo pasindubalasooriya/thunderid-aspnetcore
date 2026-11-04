@@ -15,7 +15,9 @@ public interface ILogoutSessionStore
 
     /// <summary>
     /// Whether a session has been ended: its <c>sid</c> was named in a logout, or a <c>sub</c>-only
-    /// logout for its subject was issued after the session began.
+    /// logout for its subject was issued after the session began. A session that began within the
+    /// clock tolerance after the logout's <c>iat</c> counts as ended too, since the clocks may
+    /// disagree.
     /// </summary>
     Task<bool> IsSessionEndedAsync(string? sessionId, string? subject, DateTimeOffset? authTime, CancellationToken cancellationToken = default);
 }

@@ -44,15 +44,39 @@ public class InMemoryLogoutSessionStoreTests
         Assert.True(await store.IsSessionEndedAsync(null, "alice", T0.AddSeconds(-1)));
     }
 
-    [Fact]
-    public async Task Sub_only_logout_leaves_a_later_sign_in_alone()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(30)]
+    [InlineData(119)]
+    [InlineData(120)]
+    public async Task Sub_only_logout_ends_sessions_that_began_within_the_clock_tolerance(int secondsAfterIat)
     {
         var store = new InMemoryLogoutSessionStore(Retention, new ManualTimeProvider(T0));
 
         await store.TryRecordLogoutAsync(Token(null, "alice"));
 
-        Assert.False(await store.IsSessionEndedAsync("sid-new", "alice", T0.AddSeconds(5)));
-        Assert.False(await store.IsSessionEndedAsync("sid-new", "alice", T0));
+        Assert.True(await store.IsSessionEndedAsync("sid-new", "alice", T0.AddSeconds(secondsAfterIat)));
+    }
+
+    [Fact]
+    public async Task Sub_only_logout_leaves_a_sign_in_after_the_clock_tolerance_alone()
+    {
+        var store = new InMemoryLogoutSessionStore(Retention, new ManualTimeProvider(T0));
+
+        await store.TryRecordLogoutAsync(Token(null, "alice"));
+
+        Assert.False(await store.IsSessionEndedAsync("sid-new", "alice", T0 + LogoutTokenValidator.DefaultClockSkew + TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
+    public async Task Sub_only_logout_uses_the_configured_clock_tolerance()
+    {
+        var store = new InMemoryLogoutSessionStore(Retention, new ManualTimeProvider(T0), TimeSpan.FromSeconds(30));
+
+        await store.TryRecordLogoutAsync(Token(null, "alice"));
+
+        Assert.True(await store.IsSessionEndedAsync("sid-new", "alice", T0.AddSeconds(30)));
+        Assert.False(await store.IsSessionEndedAsync("sid-new", "alice", T0.AddSeconds(31)));
     }
 
     [Fact]
