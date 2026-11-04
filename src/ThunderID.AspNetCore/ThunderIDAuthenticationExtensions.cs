@@ -82,6 +82,8 @@ public static class ThunderIDAuthenticationExtensions
             });
 
         services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, IssuerPinnedConfigurationManager.ForOpenIdConnect>();
+        services.AddSingleton<IValidateOptions<OpenIdConnectOptions>, OpenIdConnectSettingsValidator>();
+        services.AddOptions<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme).ValidateOnStart();
         return builder;
     }
 
@@ -107,6 +109,8 @@ public static class ThunderIDAuthenticationExtensions
             });
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, IssuerPinnedConfigurationManager.ForJwtBearer>();
+        services.AddSingleton<IValidateOptions<JwtBearerOptions>, JwtBearerSettingsValidator>();
+        services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme).ValidateOnStart();
         return builder;
     }
 

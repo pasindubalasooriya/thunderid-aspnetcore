@@ -632,3 +632,26 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
 - Repo with the fix: **0 failing runs in 40**, 0 build warnings, "Passed! Failed: 0, Passed: 99".
 - Step 4 mutation, in a fresh scratch copy of the fixed tree: the issuer comparison replaced with `if (false)` gives "Failed! Failed: 4, Passed: 95". The 4 attack tests fail (`Sign_in_is_refused_...`, `Logout_token_is_refused_...`, `Api_token_is_refused_...`, `Issuer_comparison_is_exact`); the 3 control tests still pass.
 - Not checked: whether the flake also existed on net9.0, before this phase. It's moot now that the cause is found and fixed.
+- Committed as `99ca9a0` "Export test signing keys once to fix intermittent failures".
+
+### Step 5: Startup validation and the framework-setting guard (2026-11-04)
+
+- New `SettingsValidators.cs`: `OpenIdConnectSettingsValidator` and `JwtBearerSettingsValidator` (`IValidateOptions`, ThunderID's scheme only), registered with `ValidateOnStart()` for both schemes. Checks:
+  - `Authority` is an absolute https URL;
+  - `ClientId` (web app) and `Audience` (API) are present;
+  - `UsePkce` and `ResponseType = code` (web app);
+  - `ProtocolValidator.RequireNonce` (web app);
+  - `ValidateIssuer`, `ValidateAudience`, `ValidateLifetime` and `RequireSignedTokens` (both).
+  - Messages start with "ThunderID: " and name the setting, never its value.
+- Measured messages (throwaway scratch test):
+  - empty `Authority`: ASP.NET Core's `InvalidOperationException` "Provide Authority, MetadataAddress, Configuration, or ConfigurationManager";
+  - `http://` or `not a url`: ASP.NET Core's "must use HTTPS unless disabled ... RequireHttpsMetadata=false";
+  - empty `ClientId`: `ArgumentException` "(Parameter 'ClientId')";
+  - `UsePkce = false` through `PostConfigure`: `OptionsValidationException` "ThunderID: UsePkce must stay true; PKCE can't be turned off."
+  - So the basic errors come from ASP.NET Core's own validation. `ValidateOnStart` moves them from the first sign-in to `StartAsync`. The new validators catch the weakened settings, and an `http` authority when the app sets `RequireHttpsMetadata = false` (test `Http_authority_is_refused_even_when_aspnet_core_allows_it`).
+- New `StartupValidationTests` (21):
+  - valid web app and API start with 0 outbound calls;
+  - 4 web app and 3 API configuration errors fail at `StartAsync` with 0 outbound calls;
+  - 7 web app and 4 API weakened settings, each through `PostConfigure`, fail with "ThunderID: <setting>".
+- `dotnet build`: 0 warnings. `dotnet test`: "Passed! Failed: 0, Passed: 120".
+- Mutations from the validation, each in a fresh scratch copy (each patch asserts its target is unique): M2 (ID token `ValidateIssuer = false`), M3 (`ValidateAudience = false`) and M4 (`RequireNonce = false`) each give "Failed! Failed: 30, Passed: 90". At the end of Step 5 of the validation, all three passed all 87 tests.
