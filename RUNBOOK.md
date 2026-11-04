@@ -693,3 +693,22 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
 - Install check, scratch `installcheck/app`: `dotnet new webapp`; a `nuget.config` with the local pack folder and nuget.org; `dotnet add package ThunderID.AspNetCore --version 0.1.0`; `AddThunderID` and `MapThunderIDBackchannelLogout` added to `Program.cs`. `dotnet build`: 0 warnings, 0 errors. `obj/project.assets.json`: `ThunderID.AspNetCore/0.1.0`.
 - **Cache cleanup:** the install put the local 0.1.0 into `%USERPROFILE%\.nuget\packages\thunderid.aspnetcore\0.1.0`. A later install "from nuget.org" (Step 13) would silently reuse it, so I deleted that folder (it was created by this check). `ls` afterwards: no such directory.
 - `dotnet test`: 120 passed.
+
+### Step 8: CI workflows (2026-11-04)
+
+- `.github/workflows/pr-builder.yml`: on pull requests, pushes to `main`, and `workflow_dispatch`. Top-level `permissions: contents: read`; checkout with `persist-credentials: false`. Steps: `setup-dotnet` from `global.json`, `dotnet restore`, the vulnerable-package check, `dotnet build --no-restore --configuration Release -warnaserror` (the solution, so the samples too), `dotnet test --no-build`, then `dotnet pack src/ThunderID.AspNetCore --no-build` (the library only; see Step 7).
+- Actions pinned by commit SHA. The tags were resolved with `gh api repos/<action>/git/ref/tags/<tag>`; both are lightweight tags pointing at commits.
+  - `actions/checkout` v7.0.1 (released 2026-07-20) is `3d3c42e5aac5ba805825da76410c181273ba90b1`.
+  - `actions/setup-dotnet` v6.0.0 (released 2026-07-16) is `a98b56852c35b8e3190ac28c8c2271da59106c68`. I didn't take v6.1.0, released 2026-11-03, one day before this step.
+  - The input names (`global-json-file`, `persist-credentials`) were read from each `action.yml` at the pinned SHA; both run on `node24`.
+- **Surprise:** `dotnet package list --vulnerable --include-transitive` exits 0 even when it finds a vulnerability. The workflow reads its `--format json` output in PowerShell and fails on any vulnerability, or on any `problems` entry, such as an audit source that can't be reached. So the check fails closed.
+  - Tested on this solution: "No vulnerable packages.", exit 0.
+  - Tested on a scratch project with `System.Text.Json` 8.0.4: `::error::System.Text.Json 8.0.4 (High): https://github.com/advisories/GHSA-8g4q-xg66-9fp4`, exit 1.
+  - Tested on a hand-written `problems` sample: exit 1. That sample matches the shape I expect from the CLI; I haven't seen the CLI emit it.
+- `.github/workflows/parity-check.yml`: `diff` against `thunder-id/javascript-sdks`'s `parity-check.yml` shows the files are identical. The reusable workflow takes optional `siblings` and `automation_authors` inputs; the defaults are right here, since the siblings are the four ThunderID SDK repos.
+- `.github/dependabot.yml`: `nuget` and `github-actions`, weekly.
+- Checks:
+  - actionlint isn't installed, so I used the plan's fallback: all three files parse with `yaml.safe_load`, and the triggers are as intended.
+  - The workflow's commands, run locally in order: restore is up to date; the build gives 0 warnings and 0 errors; the tests give 120 passed; the pack gives the `0.1.0` nupkg and snupkg in `artifacts/`, which is git-ignored and deleted afterwards.
+  - No em dashes and no bare product short form in `.github/`.
+- Not pushed. The first real run is Step 9.
