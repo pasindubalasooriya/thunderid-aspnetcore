@@ -619,3 +619,16 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
   - My own instrumentation mistakes on the way: one version appended to every rejection reason and broke every exact assertion, and one heredoc failed on quoting. Neither touched the repo.
 - Scratch worktree `baseA` removed; `git worktree prune`; `git worktree list` shows only the repo.
 - Not done yet: the cause of the flake, the Step 4 mutation check, the commit.
+- Committed as `cba5527` "Pin the discovery issuer to the configured authority" (empty body, no trailer), before the flake investigation, at your request.
+
+### Step 4a: Intermittent test failures (2026-11-04)
+
+- Fresh scratch copy of `cba5527`, with logging added that records each rejection reason and exception without changing what `Describe` returns (`instrument2.py`; every edit asserts its target occurs exactly once, and the patched lines were read back before running).
+- Experiment C, the test helper exports each public key once and serializes signing: **0 failing runs in 80**.
+- Experiment D, export once only, no lock: **0 failing runs in 80** (the 80 runs went past the 10-minute command limit and finished in the background).
+- With Experiment B (lock only: 1 in 40), this places the cause in the test helper: `LogoutTokens.Configuration()` and `Jwks()` called `ExportParameters` on the shared private `RSA` on every call while parallel test classes signed with it, and the exported public key intermittently failed to verify a correctly signed token (`IDX10511`).
+- Not a library defect: the library never holds a private key or calls `ExportParameters`; it builds keys from ThunderID's JWKS.
+- Fix, in `tests/ThunderID.AspNetCore.Tests/LogoutTokens.cs` only: the public parameters of `SigningKey` and `OtherKey` are exported once into static fields.
+- Repo with the fix: **0 failing runs in 40**, 0 build warnings, "Passed! Failed: 0, Passed: 99".
+- Step 4 mutation, in a fresh scratch copy of the fixed tree: the issuer comparison replaced with `if (false)` gives "Failed! Failed: 4, Passed: 95". The 4 attack tests fail (`Sign_in_is_refused_...`, `Logout_token_is_refused_...`, `Api_token_is_refused_...`, `Issuer_comparison_is_exact`); the 3 control tests still pass.
+- Not checked: whether the flake also existed on net9.0, before this phase. It's moot now that the cause is found and fixed.

@@ -21,10 +21,15 @@ internal static class LogoutTokens
     public static readonly RSA SigningKey = RSA.Create(2048);
     public static readonly RSA OtherKey = RSA.Create(2048);
 
+    // Exported once: exporting a key while parallel tests sign with it intermittently produced a
+    // public key that failed to verify a correctly signed token (IDX10511).
+    private static readonly RSAParameters SigningPublicKey = SigningKey.ExportParameters(false);
+    private static readonly RSAParameters OtherPublicKey = OtherKey.ExportParameters(false);
+
     public static OpenIdConnectConfiguration Configuration()
     {
         var configuration = new OpenIdConnectConfiguration { Issuer = Issuer };
-        configuration.SigningKeys.Add(new RsaSecurityKey(SigningKey.ExportParameters(false)) { KeyId = KeyId });
+        configuration.SigningKeys.Add(new RsaSecurityKey(SigningPublicKey) { KeyId = KeyId });
         configuration.IdTokenSigningAlgValuesSupported.Add("RS256");
         configuration.IdTokenSigningAlgValuesSupported.Add("ES256");
         return configuration;
@@ -64,7 +69,9 @@ internal static class LogoutTokens
 
     public static string Jwks(RSA key, string keyId)
     {
-        var parameters = key.ExportParameters(false);
+        var parameters = ReferenceEquals(key, SigningKey) ? SigningPublicKey
+            : ReferenceEquals(key, OtherKey) ? OtherPublicKey
+            : key.ExportParameters(false);
         return JsonSerializer.Serialize(new
         {
             keys = new[]
