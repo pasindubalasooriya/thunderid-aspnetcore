@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -66,8 +67,60 @@ internal sealed class JwtBearerSettingsValidator : IValidateOptions<JwtBearerOpt
     }
 }
 
+// The settings every ThunderID app needs, checked after all of the app's configuration and before
+// ASP.NET Core's own post-configure. A failure is a ThunderID error, raised when the app starts.
+internal sealed class OpenIdConnectRequiredSettings : IPostConfigureOptions<OpenIdConnectOptions>
+{
+    public void PostConfigure(string? name, OpenIdConnectOptions options)
+    {
+        if (name != OpenIdConnectDefaults.AuthenticationScheme)
+        {
+            return;
+        }
+
+        var failures = new List<string>();
+        SettingsChecks.HttpsUrl(failures, "Authority", options.Authority);
+        if (string.IsNullOrEmpty(options.ClientId))
+        {
+            failures.Add("ClientId is required.");
+        }
+
+        SettingsChecks.ThrowIfAny(failures);
+    }
+}
+
+internal sealed class JwtBearerRequiredSettings : IPostConfigureOptions<JwtBearerOptions>
+{
+    public void PostConfigure(string? name, JwtBearerOptions options)
+    {
+        if (name != JwtBearerDefaults.AuthenticationScheme)
+        {
+            return;
+        }
+
+        var failures = new List<string>();
+        SettingsChecks.HttpsUrl(failures, "Authority", options.Authority);
+        if (string.IsNullOrEmpty(options.Audience))
+        {
+            failures.Add("Audience is required.");
+        }
+
+        SettingsChecks.ThrowIfAny(failures);
+    }
+}
+
 internal static class SettingsChecks
 {
+    public const string Prefix = "The ThunderID settings are invalid: ";
+
+    public static void ThrowIfAny(List<string> failures)
+    {
+        if (failures.Count > 0)
+        {
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.InvalidSettings, Prefix + string.Join(" ", failures));
+        }
+    }
+
     public static void HttpsUrl(List<string> failures, string setting, string? value)
     {
         if (string.IsNullOrEmpty(value))
@@ -106,4 +159,36 @@ internal static class SettingsChecks
     public static ValidateOptionsResult Result(List<string> failures) => failures.Count == 0
         ? ValidateOptionsResult.Success
         : ValidateOptionsResult.Fail(failures.Select(failure => "ThunderID: " + failure));
+}
+
+// Runs the checks above before anything else starts, and reports a failure as a ThunderID error
+// rather than ASP.NET Core's OptionsValidationException. Tools that build the host without
+// starting it, such as dotnet ef, are unaffected.
+internal sealed class SettingsStartupCheck<TOptions>(IOptionsMonitor<TOptions> options, string scheme) : IHostedLifecycleService
+    where TOptions : class
+{
+    public Task StartingAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            options.Get(scheme);
+        }
+        catch (OptionsValidationException ex)
+        {
+            var failures = ex.Failures.Select(failure => failure.StartsWith("ThunderID: ", StringComparison.Ordinal) ? failure["ThunderID: ".Length..] : failure);
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.InvalidSettings, SettingsChecks.Prefix + string.Join(" ", failures), ex);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

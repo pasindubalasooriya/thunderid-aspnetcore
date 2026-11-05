@@ -41,7 +41,11 @@ public sealed class LogoutTokenValidator
         TimeSpan? clockSkew = null,
         TimeProvider? timeProvider = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(clientId);
+        if (string.IsNullOrEmpty(clientId))
+        {
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.ValidatorHasNoClientId, "LogoutTokenValidator needs the application's client ID.");
+        }
+
         _configurationManager = configurationManager;
         _clientId = clientId;
         _clockSkew = clockSkew ?? DefaultClockSkew;

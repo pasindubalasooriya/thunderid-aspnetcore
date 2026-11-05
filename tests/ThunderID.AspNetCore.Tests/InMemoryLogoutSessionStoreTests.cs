@@ -166,6 +166,10 @@ public class InMemoryLogoutSessionStoreTests
     }
 
     [Fact]
-    public void Retention_must_be_positive() =>
-        Assert.Throws<ArgumentOutOfRangeException>(() => new InMemoryLogoutSessionStore(TimeSpan.Zero));
+    public void Retention_must_be_positive()
+    {
+        var ex = Assert.Throws<ThunderIDRuntimeException>(() => new InMemoryLogoutSessionStore(TimeSpan.Zero));
+
+        Assert.Equal(ThunderIDErrorCodes.SessionStoreRetentionInvalid, ex.Code);
+    }
 }

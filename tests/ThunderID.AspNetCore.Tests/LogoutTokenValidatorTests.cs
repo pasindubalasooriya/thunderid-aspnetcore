@@ -21,6 +21,17 @@ public class LogoutTokenValidatorTests
         return result.Error;
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void Client_id_is_required(string? clientId)
+    {
+        var ex = Assert.Throws<ThunderIDRuntimeException>(() => new LogoutTokenValidator(
+            new StaticConfigurationManager<OpenIdConnectConfiguration>(LogoutTokens.Configuration()), clientId!));
+
+        Assert.Equal(ThunderIDErrorCodes.ValidatorHasNoClientId, ex.Code);
+    }
+
     [Fact]
     public async Task Token_shaped_like_thunderids_is_accepted()
     {

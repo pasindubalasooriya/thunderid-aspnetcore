@@ -29,12 +29,16 @@ public static class BackchannelLogoutEndpoint
     public static IEndpointConventionBuilder MapThunderIDBackchannelLogout(this IEndpointRouteBuilder endpoints, string pattern, Func<BackchannelLogoutContext, Task> onLoggedOut) =>
         Map(endpoints, pattern, onLoggedOut);
 
-    private static IEndpointConventionBuilder Map(IEndpointRouteBuilder endpoints, string pattern, Func<BackchannelLogoutContext, Task>? onLoggedOut) =>
+    private static IEndpointConventionBuilder Map(IEndpointRouteBuilder endpoints, string pattern, Func<BackchannelLogoutContext, Task>? onLoggedOut)
+    {
+        ThunderIDAuthenticationExtensions.EnsureRegistered(endpoints.ServiceProvider, nameof(MapThunderIDBackchannelLogout));
+
         // Passed as a Delegate so the returned IResult is written; the RequestDelegate overload would drop it.
-        endpoints.MapPost(pattern, (Func<HttpContext, Task<IResult>>)(context => HandleAsync(context, onLoggedOut)))
+        return endpoints.MapPost(pattern, (Func<HttpContext, Task<IResult>>)(context => HandleAsync(context, onLoggedOut)))
             .AllowAnonymous()
             .DisableAntiforgery()
             .ExcludeFromDescription();
+    }
 
     internal static async Task<IResult> HandleAsync(HttpContext context, Func<BackchannelLogoutContext, Task>? onLoggedOut = null)
     {

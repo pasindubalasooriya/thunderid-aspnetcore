@@ -23,6 +23,8 @@ public static class ThunderIDSignOutExtensions
     /// </summary>
     public static async Task<ThunderIDSignOutResult> SignOutOfThunderIDAsync(this HttpContext context, string? redirectUri = null)
     {
+        ThunderIDAuthenticationExtensions.EnsureRegistered(context.RequestServices, nameof(SignOutOfThunderIDAsync));
+
         var session = await context.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         if (!session.Succeeded)
         {
