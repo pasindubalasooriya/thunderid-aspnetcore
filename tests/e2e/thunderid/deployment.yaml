@@ -1,0 +1,83 @@
+server:
+  hostname: "0.0.0.0"
+  public_url: "https://localhost:8091"
+  port: 8090
+  security:
+    # Gates the Direct API endpoints. The secret is generated into config/secrets/direct_auth_secret
+    # by setup.sh and read from there at load time. Callers present it in the Direct-Auth-Secret header.
+    direct_auth_secret: "file://config/secrets/direct_auth_secret"
+    # Audiences below are RFC 8707 resource indicators, normally the identifier of the resource
+    # server your tokens are bound to. Both accept Go-template environment-variable references
+    # (as used elsewhere in this file's tooling), so a deployment can derive them from its public
+    # URL instead of hardcoding one.
+    rest:
+      # Required of tokens presented to the REST API gate. Omitted leaves the audience unchecked,
+      # since REST authorizes by scope.
+      # audience: "https://localhost:8090/mcp"
+    mcp:
+      # The MCP resource identifier: both the required token audience and the RFC 9728 published
+      # "resource". Mandatory per the MCP spec, so omitting it falls back to this server's own MCP
+      # endpoint rather than disabling the check.
+      # audience: "https://localhost:8090/mcp"
+
+tls:
+  min_version: "1.3"
+  cert_file: "config/certs/server.cert"
+  key_file: "config/certs/server.key"
+
+database:
+  config:
+    type: "sqlite"
+    sqlite:
+      path: "database/configdb.db"
+      options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+      max_open_conns: 500
+      max_idle_conns: 100
+      conn_max_lifetime: 3600
+
+  runtime_transient:
+    type: "sqlite"
+    sqlite:
+      path: "database/runtime_transient.db"
+      options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+      max_open_conns: 500
+      max_idle_conns: 100
+      conn_max_lifetime: 3600
+
+  entity:
+    type: "sqlite"
+    sqlite:
+      path: "database/entitydb.db"
+      options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+      max_open_conns: 500
+      max_idle_conns: 100
+      conn_max_lifetime: 3600
+
+  runtime_persistent:
+    type: "sqlite"
+    sqlite:
+      path: "database/runtime_persistent.db"
+      options: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+      max_open_conns: 500
+      max_idle_conns: 100
+      conn_max_lifetime: 3600
+
+crypto:
+  encryption:
+    key: "file://config/certs/crypto.key"
+  password_hashing:
+    algorithm: "PBKDF2"
+  keys:
+    - id: "default-key"
+      cert_file: "config/certs/signing.cert"
+      key_file: "config/certs/signing.key"
+    - id: "ecdsa-key"
+      cert_file: "config/certs/ecdsa-signing.cert"
+      key_file: "config/certs/ecdsa-signing.key"
+
+jwt:
+    preferred_key_id: "default-key"
+
+passkey:
+  allowed_origins:
+    - "https://localhost:8091"

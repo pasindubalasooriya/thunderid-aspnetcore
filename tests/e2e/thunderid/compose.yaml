@@ -1,0 +1,35 @@
+# A throwaway ThunderID for the end-to-end tests, at https://localhost:8091.
+# E2E_TLS_DIR must hold server.cert and server.key for "localhost", trusted by this machine.
+# The admin password below is a fixed TEST-ONLY value. Never reuse it anywhere else.
+name: thunderid-aspnetcore-e2e
+
+services:
+  thunderid:
+    image: thunderid-e2e:${THUNDERID_PIN:-46a6afc35}
+    ports:
+      - "127.0.0.1:8091:8090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: e2e-test-only-Admin1
+    volumes:
+      - database:/opt/thunderid/database
+      - certs:/opt/thunderid/config/certs
+      - secrets:/opt/thunderid/config/secrets
+      - ./deployment.yaml:/opt/thunderid/deployment.yaml:ro
+      - ./bootstrap/10-e2e.yaml:/opt/thunderid/bootstrap/10-e2e.yaml:ro
+      - ${E2E_TLS_DIR:?set E2E_TLS_DIR to a folder holding server.cert and server.key}/server.cert:/opt/thunderid/config/certs/server.cert:ro
+      - ${E2E_TLS_DIR}/server.key:/opt/thunderid/config/certs/server.key:ro
+    # setup.sh prints a generated secret, so its output stays in the container unless it fails.
+    command: ["sh", "-c", "./setup.sh > /tmp/setup.log 2>&1 || { grep -iE 'error|fail' /tmp/setup.log; exit 1; }; exec ./start.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8090/.well-known/openid-configuration"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  database:
+  certs:
+  secrets:

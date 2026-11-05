@@ -954,3 +954,46 @@ You asked to run Steps 0 to 7 without stopping, and to start before the two-week
   - `token_endpoint_auth_methods_supported` includes `client_secret_post`.
 - **It was the container that answered:** its logs show the discovery requests from `172.17.0.1`. With it stopped, 8091 refused connections (`000`); started again, it answered `200`.
 - **My mistake:** the first `setup.sh` output was filtered by a blocklist ("password"), so the generated `Direct-Auth-Secret` was printed to the session. It belonged to a throwaway container and never left this machine. I deleted the log and the three volumes and ran setup again on fresh ones; setup output is now filtered by an allowlist.
+
+### Step 3: Provisioning files and the E2E project (2026-11-05)
+
+Done before Step 2, because Step 2's sign-in needs them.
+
+- **Deviation, simpler than the plan:** the e2e resources are a bootstrap file, not declarative resources.
+  - ThunderID's `setup.sh` imports every YAML file under `bootstrap/` with upsert, so a mounted `bootstrap/10-e2e.yaml` lands in the database next to the defaults.
+  - Turning `declarative_resources.enabled` on would have made each store file-only and hidden the default flows, organization unit and user schema (`internal/application/config.go` at the pin).
+  - No API token or store mode is needed.
+- `tests/e2e/thunderid/`:
+  - `deployment.yaml` is the image's own file with two lines changed: `public_url` and the passkey origin moved to 8091. It holds no secret values; both secret settings are `file://` references.
+  - `bootstrap/10-e2e.yaml` has:
+    - `e2e-auth-flow`: an SSO check, credentials, `SessionExecutor`, authorization and assert, plus a sign-up branch;
+    - `e2e-registration-flow`: generated from the pinned default registration flow by `scratchpad/e2e-build/regflow.py`, changing only its ID, name, handle and final CALL;
+    - the `e2e-webapp` client: `client_secret_post`, PKCE, `authorization_code` and `refresh_token`, back-channel URI `http://host.docker.internal:5201/backchannel-logout`;
+    - the `e2e-user` user.
+  - `compose.yaml` binds `127.0.0.1:8091`, maps `host.docker.internal` to `host-gateway`, and runs `setup.sh` (its output kept inside the container, since it prints a generated secret) then `start.sh`. The TLS certificate comes from `E2E_TLS_DIR`.
+  - `README.md` has the test-only credentials warning and the local run steps.
+- **Surprises, in order:**
+  1. `APP-1039 Conflicting flow references`. ThunderID requires every flow that a bound flow CALLs to be the app's binding for that type. The default registration flow calls the *default* sign-in flow, so the app needed its own registration flow.
+  2. My first diagnosis was wrong. I took it for handle ambiguity and switched the bindings to IDs, but the same error followed. Reading `inboundclient/service.go` found the real cause.
+  3. ThunderID's back-channel check rejects `localhost` and private IP literals, but hostnames "as written". So `host.docker.internal` passes with the default `reject_private_addresses: true`, and the overlay leaves it on.
+  4. A port bound only to `127.0.0.1` on the host is reachable from the container through `host.docker.internal` (Docker Desktop): `200`.
+  5. The hosted sign-in page renders inputs with the flow's `ref` as the element ID (`#username`, `#password`) and actions with their element ID (`#action_001`). The page object uses these flow identifiers; no CSS-class fallback is needed.
+  6. `.gitignore`'s `*.e2e` (Visual Studio trace files) matched the `ThunderID.AspNetCore.E2E` folder through Windows' case-insensitive matching. Added `!tests/ThunderID.AspNetCore.E2E/`.
+  7. Playwright's driver files go past the 260-character path limit when built under the scratchpad, so the Step 2 control ran from `%TEMP%\tidm2`, which was then deleted.
+- **Ports:** the e2e app uses `https://localhost:7201` and `http://localhost:5201`, so it doesn't clash with the sample or the Phase 1 app on 7101.
+- **`tests/ThunderID.AspNetCore.E2E`:** xUnit plus `Microsoft.Playwright` 1.64.1, not in the solution, so `pr-builder.yml`'s `dotnet test` skips it.
+  - `E2EApp` hosts a small app on the library in the test process. The plan said the WebApp sample, but in-process hosting gives an HTTP back-channel port without weakening the sample's HTTPS redirection, and lets tests read the refresh token and the callback's calls.
+  - Test parallelization is off, because every test uses the same ports.
+- **Verification:**
+  - `docker compose down -v` then `up -d --wait`, from clean volumes: healthy in 3 to 4 s, several times.
+  - Discovery issuer `https://localhost:8091`; the certificate is trusted by Windows (PowerShell, no validation skip).
+  - `/oauth2/authorize` for `e2e-webapp` goes to `/gate/signin?applicationId=...e2e02`, and for an unknown client to `/gate/error?...Invalid+client_id`.
+  - 134 unit tests still pass.
+
+### Step 2: Refresh tokens and revocation (2026-11-05)
+
+- Measured by `RefreshTokenTests.ThunderID_issues_a_refresh_token_and_refuses_it_once_revoked`, which signs in through the browser against the Step 3 container. No token values are printed.
+- **A1 holds:** the token response carries a `refresh_token`. A refresh with it answers 200, with a rotated refresh token.
+- **A2 holds:** `/oauth2/revoke` with `client_secret_post` answers **200** for the rotated token, and a refresh with it then answers **400 `invalid_grant`**.
+- **Control,** in a scratch copy with the revocation call removed: the same refresh answered `OK` (`Expected: BadRequest, Actual: OK`). The refusal comes from the revocation.
+- So the sign-out's main path (revoke the refresh token) is the real one. The access-token fallback is only for clients without `refresh_token`.
