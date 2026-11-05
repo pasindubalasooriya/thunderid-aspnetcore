@@ -28,8 +28,7 @@ OpenID Connect and JWT bearer handlers (`Microsoft.AspNetCore.Authentication.Ope
 `Microsoft.AspNetCore.Authentication.JwtBearer`). This package covers the Framework Specific layer
 (configuration, sign-in and sign-out wiring, the API scope policy) and does one piece of protocol
 work itself, validating back-channel logout tokens. Delegating the protocol layer this way is a
-recorded deviation from the specification's layering rule; see the
-[gap report](docs/validation/gap-report.md).
+deliberate deviation from the specification's layering rule.
 
 ## What's in the box
 
@@ -281,10 +280,9 @@ many sessions ended: cookie sessions end on their next request, so the count isn
   session is refused.
 - **Use a shared `ILogoutSessionStore`** with more than one instance (see [Limits](#limits)).
 
-## What I found testing ASP.NET Core against ThunderID
+## Why these defaults
 
-The full log, with times and wording as it happened, is in [FRICTION-LOG.md](FRICTION-LOG.md).
-Exact commands and results are in [RUNBOOK.md](RUNBOOK.md).
+Where ASP.NET Core and ThunderID don't fit together out of the box, and what handles each case:
 
 | Area | Finding | Handled by |
 |---|---|---|
@@ -327,4 +325,4 @@ Exact commands and results are in [RUNBOOK.md](RUNBOOK.md).
 | `tests/ThunderID.AspNetCore.E2E` | Playwright end-to-end tests |
 | `tests/e2e/thunderid` | The end-to-end ThunderID: compose file, configuration and test resources |
 | `docs/backchannel-logout.png` | The sequence diagram above (`.drawio` source alongside) |
-| `docs/blog` | Article draft, screenshots and captures |
+| `docs/release-notes` | Release notes for each version |
