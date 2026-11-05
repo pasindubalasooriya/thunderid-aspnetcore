@@ -997,3 +997,15 @@ Done before Step 2, because Step 2's sign-in needs them.
 - **A2 holds:** `/oauth2/revoke` with `client_secret_post` answers **200** for the rotated token, and a refresh with it then answers **400 `invalid_grant`**.
 - **Control,** in a scratch copy with the revocation call removed: the same refresh answered `OK` (`Expected: BadRequest, Actual: OK`). The refusal comes from the revocation.
 - So the sign-out's main path (revoke the refresh token) is the real one. The access-token fallback is only for clients without `refresh_token`.
+
+### Step 4: E2E sign-in and sign-up (2026-11-05)
+
+- `E2ETest` (base class) starts the in-process app and Chromium for each test. Each page gets a new browser context, so no cookies are shared.
+- `ThunderIDSignInPage.SignUpAsync` follows the sign-up link (`[data-action-ref=action_signup]`), then the registration flow's credentials prompt (`#username`, `#password`, `#action_credentials`), then its attributes prompt (`#email`, `#action_schema_attrs`). These are all flow identifiers. The user-type prompt doesn't appear, because the app allows only `person`.
+- `SignInTests`:
+  - `Sign_in_reaches_the_protected_page_with_the_users_claims`: `email`, `name`, `sub` and `sid` on the profile page.
+  - `Sign_up_creates_a_user_and_lands_signed_in`: a new user with a random username lands signed in with its email, and a fresh browser context then signs in as that user.
+- **Verification:**
+  - Three runs, each after `docker compose down -v` and `up -d --wait`: 3 of 3 tests passed each time (17 to 18 s).
+  - Mutation, in a scratch copy of `tests/e2e/thunderid`: with the registered redirect URI changed to `/signin-oidc-broken`, all 3 tests failed, timing out waiting for the sign-in page.
+  - With the real files restored, 3 of 3 passed.

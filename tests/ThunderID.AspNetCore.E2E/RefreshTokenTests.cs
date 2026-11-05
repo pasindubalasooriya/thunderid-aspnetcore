@@ -1,42 +1,20 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.Playwright;
 
 namespace ThunderID.AspNetCore.E2E;
 
 // What sign-out relies on: ThunderID issues a refresh token to this client, and revoking it at
 // /oauth2/revoke with client_secret_post makes the refresh grant refuse it.
-public sealed class RefreshTokenTests : IAsyncLifetime
+public sealed class RefreshTokenTests : E2ETest
 {
-    private readonly E2EApp _app = new();
-    private IPlaywright? _playwright;
-    private IBrowser? _browser;
-
-    public async Task InitializeAsync()
-    {
-        await _app.StartAsync();
-        _playwright = await Playwright.CreateAsync();
-        _browser = await _playwright.Chromium.LaunchAsync();
-    }
-
-    public async Task DisposeAsync()
-    {
-        await _browser!.DisposeAsync();
-        _playwright!.Dispose();
-        await _app.DisposeAsync();
-    }
-
     [Fact]
     public async Task ThunderID_issues_a_refresh_token_and_refuses_it_once_revoked()
     {
-        var page = await _browser!.NewPageAsync(new() { IgnoreHTTPSErrors = true });
-        await page.GotoAsync(E2EApp.Url + "/profile");
-        await new ThunderIDSignInPage(page).SignInAsync(TestUser.Username, TestUser.Password);
-        await page.WaitForURLAsync(E2EApp.Url + "/profile");
-        Assert.NotNull(_app.LastRefreshToken);
+        await SignInAsync(await NewPageAsync());
+        Assert.NotNull(App.LastRefreshToken);
 
         using var http = new HttpClient();
-        var (refreshed, body) = await RefreshAsync(http, _app.LastRefreshToken!);
+        var (refreshed, body) = await RefreshAsync(http, App.LastRefreshToken!);
         Assert.Equal(HttpStatusCode.OK, refreshed);
         var rotated = body.GetProperty("refresh_token").GetString()!;
 

@@ -15,6 +15,21 @@ public sealed class ThunderIDSignInPage(IPage page)
         await page.Locator("#password").FillAsync(password);
         await page.Locator("#action_001").ClickAsync();
     }
+
+    public async Task SignUpAsync(string username, string password, string email)
+    {
+        await page.WaitForURLAsync("**/gate/signin**");
+        await page.Locator("[data-action-ref=action_signup]").ClickAsync();
+
+        await page.Locator("#action_credentials").WaitForAsync();
+        await page.Locator("#username").FillAsync(username);
+        await page.Locator("#password").FillAsync(password);
+        await page.Locator("#action_credentials").ClickAsync();
+
+        await page.Locator("#action_schema_attrs").WaitForAsync();
+        await page.Locator("#email").FillAsync(email);
+        await page.Locator("#action_schema_attrs").ClickAsync();
+    }
 }
 
 /// <summary>The user registered in tests/e2e/thunderid/bootstrap/10-e2e.yaml, with a TEST-ONLY password.</summary>
