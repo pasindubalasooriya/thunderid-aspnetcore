@@ -23,9 +23,12 @@ public static class ThunderIDAuthenticationExtensions
         configure(settings);
 
         services.TryAddSingleton<ThunderIDRegistration>();
-        // Before AddOpenIdConnect, so it runs ahead of the handler's own post-configure, which
-        // would otherwise fail first on a missing or http Authority with a framework error.
+        // Before AddOpenIdConnect, so these run ahead of the handler's own post-configure: that one
+        // would otherwise fail first on a missing or http Authority with a framework error, and it
+        // builds the backchannel the token status capture has to wrap.
         services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, OpenIdConnectRequiredSettings>();
+        services.AddHttpContextAccessor();
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, SignInFailures.CaptureTokenStatus>();
 
         // Back-channel logout: a replaceable store (in memory by default, kept as long as a cookie
         // can stay valid) and a validator that shares the OIDC handler's discovery and JWKS cache.
@@ -88,6 +91,7 @@ public static class ThunderIDAuthenticationExtensions
             });
 
         services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, IssuerPinnedConfigurationManager.ForOpenIdConnect>();
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, SignInFailures.WrapRemoteFailure>();
         services.AddSingleton<IValidateOptions<OpenIdConnectOptions>, OpenIdConnectSettingsValidator>();
         services.AddHostedService(sp => new SettingsStartupCheck<OpenIdConnectOptions>(
             sp.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>(), OpenIdConnectDefaults.AuthenticationScheme));
