@@ -89,7 +89,7 @@ public sealed class LogoutTokenValidator
                 result = await _handler.ValidateTokenAsync(logoutToken, Parameters(configuration));
             }
         }
-        catch (DiscoveryIssuerMismatchException)
+        catch (ThunderIDException ex) when (ex.Code == ThunderIDErrorCodes.DiscoveryIssuerMismatch)
         {
             // Nothing in a discovery document that names another issuer can be trusted, keys included.
             return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.DiscoveryIssuerMismatch, "discovery document was rejected: its issuer is not the configured authority");

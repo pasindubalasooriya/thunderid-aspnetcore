@@ -53,7 +53,7 @@ public static class ThunderIDSignOutExtensions
     }
 
     // Returns null on success, or why revocation failed. Never logs or returns the token.
-    private static async Task<string?> RevokeAsync(HttpContext context, AuthenticationProperties? properties)
+    private static async Task<ThunderIDException?> RevokeAsync(HttpContext context, AuthenticationProperties? properties)
     {
         var (token, hint) = properties?.GetTokenValue("refresh_token") is { } refreshToken
             ? (refreshToken, "refresh_token")
@@ -66,7 +66,7 @@ public static class ThunderIDSignOutExtensions
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(ThunderIDSignOutExtensions));
         var oidc = context.RequestServices.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>().Get(OpenIdConnectDefaults.AuthenticationScheme);
 
-        string? error;
+        ThunderIDException? error;
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
@@ -76,7 +76,7 @@ public static class ThunderIDSignOutExtensions
             var configuration = await oidc.ConfigurationManager!.GetConfigurationAsync(timeout.Token);
             if (string.IsNullOrEmpty(configuration.RevocationEndpoint))
             {
-                error = "ThunderID's discovery document has no revocation_endpoint";
+                error = new ThunderIDRuntimeException(ThunderIDErrorCodes.RevocationEndpointMissing, "ThunderID's discovery document has no revocation_endpoint.");
             }
             else
             {
@@ -92,16 +92,25 @@ public static class ThunderIDSignOutExtensions
                 }
 
                 using var response = await oidc.Backchannel.PostAsync(configuration.RevocationEndpoint, new FormUrlEncodedContent(form), timeout.Token);
-                error = response.IsSuccessStatusCode ? null : $"revocation endpoint answered {(int)response.StatusCode}";
+                error = response.IsSuccessStatusCode
+                    ? null
+                    : new ThunderIDApiException(ThunderIDErrorCodes.RevocationRejected, $"ThunderID's revocation endpoint refused to revoke the {hint}.",
+                        (int)response.StatusCode, response.ReasonPhrase);
             }
         }
-        catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (!context.RequestAborted.IsCancellationRequested)
         {
-            error = $"revocation endpoint did not answer within {RevocationTimeout.TotalSeconds} seconds";
+            error = new ThunderIDRuntimeException(ThunderIDErrorCodes.RevocationTimedOut,
+                $"ThunderID's revocation endpoint did not answer within {RevocationTimeout.TotalSeconds} seconds.", ex);
+        }
+        catch (ThunderIDException ex)
+        {
+            // Discovery failed or named another issuer, so the token was never sent.
+            error = ex;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            error = $"revocation endpoint could not be reached: {ex.Message}";
+            error = new ThunderIDRuntimeException(ThunderIDErrorCodes.RevocationUnreachable, "ThunderID's revocation endpoint could not be reached.", ex);
         }
 
         if (error is null)
@@ -110,7 +119,7 @@ public static class ThunderIDSignOutExtensions
         }
         else
         {
-            logger.LogWarning("Sign-out could not revoke the {TokenType} at ThunderID: {Reason}", hint, error);
+            logger.LogWarning(error.InnerException, "Sign-out could not revoke the {TokenType} at ThunderID ({Code}): {Reason}", hint, error.Code, error.Message);
         }
 
         return error;
@@ -122,7 +131,7 @@ public sealed class ThunderIDSignOutResult
 {
     internal static readonly ThunderIDSignOutResult Success = new(null);
 
-    internal ThunderIDSignOutResult(string? revocationError) => RevocationError = revocationError;
+    internal ThunderIDSignOutResult(ThunderIDException? revocationError) => RevocationError = revocationError;
 
     /// <summary>
     /// True when ThunderID couldn't be told to revoke the session's token. The local session is
@@ -130,6 +139,11 @@ public sealed class ThunderIDSignOutResult
     /// </summary>
     public bool RevocationFailed => RevocationError is not null;
 
-    /// <summary>Why revocation failed, or null when it succeeded or there was nothing to revoke.</summary>
-    public string? RevocationError { get; }
+    /// <summary>
+    /// Why revocation failed, or null when it succeeded or there was nothing to revoke. A
+    /// <see cref="ThunderIDApiException"/> when ThunderID answered with an error (its status is on the
+    /// exception); a <see cref="ThunderIDRuntimeException"/> when ThunderID couldn't be reached, didn't
+    /// answer in time, or its discovery document was refused.
+    /// </summary>
+    public ThunderIDException? RevocationError { get; }
 }

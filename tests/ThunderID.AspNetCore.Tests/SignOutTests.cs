@@ -159,7 +159,10 @@ public sealed class SignOutTests : IAsyncDisposable
         var response = await SignOutAsync(client, cookie);
 
         Assert.True(_result!.RevocationFailed);
-        Assert.Contains("could not be reached", _result.RevocationError);
+        var error = Assert.IsType<ThunderIDRuntimeException>(_result.RevocationError);
+        Assert.Equal(ThunderIDErrorCodes.RevocationUnreachable, error.Code);
+        Assert.Equal("ThunderID's revocation endpoint could not be reached.", error.Message);
+        Assert.IsType<HttpRequestException>(error.InnerException);
         Assert.Equal(["revocation", "cookie cleared", "end-session redirect"], _events);
         AssertCookieCleared(response);
         Assert.StartsWith(Authority + "/oauth2/logout?", response.Headers.Location!.ToString());
@@ -176,7 +179,10 @@ public sealed class SignOutTests : IAsyncDisposable
         var response = await SignOutAsync(client, cookie);
 
         Assert.True(_result!.RevocationFailed);
-        Assert.Equal("revocation endpoint answered 401", _result.RevocationError);
+        var error = Assert.IsType<ThunderIDApiException>(_result.RevocationError);
+        Assert.Equal(ThunderIDErrorCodes.RevocationRejected, error.Code);
+        Assert.Equal((401, "Unauthorized"), (error.StatusCode, error.StatusText));
+        Assert.Equal("ThunderID's revocation endpoint refused to revoke the refresh_token.", error.Message);
         AssertCookieCleared(response);
     }
 
@@ -189,7 +195,9 @@ public sealed class SignOutTests : IAsyncDisposable
         var response = await SignOutAsync(client, cookie);
 
         Assert.True(_result!.RevocationFailed);
-        Assert.Equal("revocation endpoint did not answer within 10 seconds", _result.RevocationError);
+        var error = Assert.IsType<ThunderIDRuntimeException>(_result.RevocationError);
+        Assert.Equal(ThunderIDErrorCodes.RevocationTimedOut, error.Code);
+        Assert.Equal("ThunderID's revocation endpoint did not answer within 10 seconds.", error.Message);
         AssertCookieCleared(response);
     }
 
@@ -201,7 +209,8 @@ public sealed class SignOutTests : IAsyncDisposable
 
         var response = await SignOutAsync(client, cookie);
 
-        Assert.Equal("ThunderID's discovery document has no revocation_endpoint", _result!.RevocationError);
+        var error = Assert.IsType<ThunderIDRuntimeException>(_result!.RevocationError);
+        Assert.Equal(ThunderIDErrorCodes.RevocationEndpointMissing, error.Code);
         AssertCookieCleared(response);
     }
 
@@ -215,7 +224,9 @@ public sealed class SignOutTests : IAsyncDisposable
         var response = await SignOutAsync(client, cookie);
 
         Assert.Empty(thunderID.Revocations);
-        Assert.Contains("doesn't match the configured Authority", _result!.RevocationError);
+        var error = Assert.IsType<ThunderIDRuntimeException>(_result!.RevocationError);
+        Assert.Equal(ThunderIDErrorCodes.DiscoveryIssuerMismatch, error.Code);
+        Assert.Contains("doesn't match the configured Authority", error.Message);
         AssertCookieCleared(response);
         Assert.Equal("/signed-out", response.Headers.Location!.ToString());
     }
@@ -229,10 +240,28 @@ public sealed class SignOutTests : IAsyncDisposable
         var response = await SignOutAsync(client, cookie);
 
         Assert.True(_result!.RevocationFailed);
+        var error = Assert.IsType<ThunderIDRuntimeException>(_result.RevocationError);
+        Assert.Equal(ThunderIDErrorCodes.DiscoveryUnavailable, error.Code);
+        Assert.NotNull(error.InnerException);
         AssertCookieCleared(response);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.Equal("/signed-out", response.Headers.Location!.ToString());
         AssertNoTokenLogged();
+    }
+
+    [Fact]
+    public async Task Discovery_answered_with_an_error_is_reported_with_its_status()
+    {
+        var client = await StartAsync(new StubThunderID(this) { DiscoveryStatus = HttpStatusCode.ServiceUnavailable });
+        var cookie = await SignInAsync(client);
+
+        var response = await SignOutAsync(client, cookie);
+
+        var error = Assert.IsType<ThunderIDApiException>(_result!.RevocationError);
+        Assert.Equal(ThunderIDErrorCodes.DiscoveryRejected, error.Code);
+        Assert.Equal((503, "Service Unavailable"), (error.StatusCode, error.StatusText));
+        AssertCookieCleared(response);
+        Assert.Equal("/signed-out", response.Headers.Location!.ToString());
     }
 
     [Fact]
@@ -279,6 +308,7 @@ public sealed class SignOutTests : IAsyncDisposable
         public Exception? RevocationFailure { get; init; }
         public bool RevocationHangs { get; init; }
         public Exception? DiscoveryFailure { get; init; }
+        public HttpStatusCode DiscoveryStatus { get; init; } = HttpStatusCode.OK;
         public ConcurrentQueue<string> Requests { get; } = new();
         public ConcurrentQueue<Dictionary<string, string>> Revocations { get; } = new();
 
@@ -292,6 +322,8 @@ public sealed class SignOutTests : IAsyncDisposable
 
             switch (request.RequestUri.AbsolutePath)
             {
+                case "/.well-known/openid-configuration" when DiscoveryStatus != HttpStatusCode.OK:
+                    return new HttpResponseMessage(DiscoveryStatus);
                 case "/.well-known/openid-configuration":
                     var revocation = AdvertiseRevocation ? $"\"revocation_endpoint\":\"{Authority}/oauth2/revoke\"," : "";
                     return Json($$"""

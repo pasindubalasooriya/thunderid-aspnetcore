@@ -30,6 +30,9 @@ public static class ThunderIDErrorCodes
     /// <summary>The discovery document names an issuer other than the configured <c>Authority</c>, so none of it is used.</summary>
     public const string DiscoveryIssuerMismatch = "ASPNETCORE-DISCOVERY-GC-IV01";
 
+    /// <summary>ThunderID answered the request for its discovery document or signing keys with an error.</summary>
+    public const string DiscoveryRejected = "ASPNETCORE-DISCOVERY-GC-HE01";
+
     /// <summary>The discovery document or the signing keys couldn't be fetched.</summary>
     public const string DiscoveryUnavailable = "ASPNETCORE-DISCOVERY-GC-NE01";
 
