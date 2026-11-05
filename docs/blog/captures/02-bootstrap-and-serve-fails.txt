@@ -1,5 +1,0 @@
-$ .\start.ps1 --bootstrap-and-serve   (fresh unzip, ADMIN_PASSWORD set)
-[INFO] Running ThunderID bootstrap ...
-[ERROR] Bootstrap failed.
-level=ERROR msg="Failed to read file content" component=ConfigUtil filePath=...\config\certs\crypto.key error="open ...\config\certs\crypto.key: The system cannot find the file specified."
-level=ERROR msg="Failed to load configurations" error="one or more file path substitutions failed"
