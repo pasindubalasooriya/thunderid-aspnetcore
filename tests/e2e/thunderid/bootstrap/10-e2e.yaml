@@ -353,6 +353,8 @@ authFlowId: 01900000-0000-7000-8000-0000000e2e01
 # sign-up uses a copy of the default registration flow that returns to the E2E sign-in flow.
 registrationFlowId: 01900000-0000-7000-8000-0000000e2e04
 isRegistrationFlowEnabled: true
+# ThunderID's default sign-out flow, which ends the session without a confirmation prompt.
+signOutFlowId: 01900000-0000-7000-8000-00000000006a
 allowedUserTypes:
   - person
 inboundAuthConfig:

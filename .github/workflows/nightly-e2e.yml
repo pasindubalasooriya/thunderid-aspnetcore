@@ -1,0 +1,126 @@
+# Runs the end-to-end tests every night against a ThunderID built from a pinned commit.
+# The pin moves only by a deliberate change to THUNDERID_COMMIT and the image tag.
+#
+# Uses:
+#   OS: ubuntu-latest
+
+name: 🌙 Nightly E2E
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  THUNDERID_COMMIT: 46a6afc350d85201d75027f18257492875abbf0b
+  # compose.yaml runs thunderid-e2e:${THUNDERID_PIN}.
+  THUNDERID_PIN: 46a6afc35
+
+jobs:
+  e2e:
+    name: 🌐 End-to-End Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: 💾 Restore the Cached ThunderID Image
+        id: image-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/thunderid-image.tar
+          key: thunderid-e2e-${{ env.THUNDERID_COMMIT }}
+
+      - name: 📥 Checkout ThunderID at the Pin
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: thunder-id/thunderid
+          ref: ${{ env.THUNDERID_COMMIT }}
+          path: thunderid-src
+          persist-credentials: false
+
+      - name: 🐳 Build the ThunderID Image
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          start=$(date +%s)
+          docker build -t "thunderid-e2e:$THUNDERID_PIN" thunderid-src
+          echo "Image built in $(( $(date +%s) - start ))s"
+          docker save "thunderid-e2e:$THUNDERID_PIN" -o "$RUNNER_TEMP/thunderid-image.tar"
+
+      - name: 💾 Cache the ThunderID Image
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/thunderid-image.tar
+          key: thunderid-e2e-${{ env.THUNDERID_COMMIT }}
+
+      - name: 🐳 Load the Cached ThunderID Image
+        if: steps.image-cache.outputs.cache-hit == 'true'
+        run: docker load -i "$RUNNER_TEMP/thunderid-image.tar"
+
+      # A throwaway certificate for localhost, trusted by the runner so the test app accepts ThunderID's TLS.
+      - name: 🔐 Create a Trusted TLS Certificate
+        run: |
+          dir="$RUNNER_TEMP/e2e-tls"
+          mkdir -p "$dir"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+            -keyout "$dir/server.key" -out "$dir/server.cert"
+          # The container runs as user 10001, which must read the key.
+          chmod 644 "$dir/server.key"
+          sudo cp "$dir/server.cert" /usr/local/share/ca-certificates/thunderid-e2e.crt
+          sudo update-ca-certificates
+          echo "E2E_TLS_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: ▶️ Start ThunderID
+        run: docker compose -f tests/e2e/thunderid/compose.yaml up -d --wait
+
+      - name: 🔨 Build the Tests
+        run: dotnet build tests/ThunderID.AspNetCore.E2E --configuration Release -warnaserror
+
+      - name: 🌐 Install the Browser
+        run: |
+          dotnet dev-certs https
+          pwsh tests/ThunderID.AspNetCore.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+
+      - name: 🧪 Run the End-to-End Tests
+        env:
+          E2E_BACKCHANNEL_URL: http://0.0.0.0:5201
+          E2E_TRACE_DIR: ${{ runner.temp }}/traces
+        run: |
+          mkdir -p "$E2E_TRACE_DIR"
+          dotnet test tests/ThunderID.AspNetCore.E2E --no-build --configuration Release
+
+      - name: 📋 Show ThunderID's Log
+        if: failure()
+        run: docker compose -f tests/e2e/thunderid/compose.yaml logs --no-color thunderid
+
+      - name: 📤 Upload Playwright Traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-traces
+          path: ${{ runner.temp }}/traces
+          retention-days: 7
+
+      - name: 🧹 Stop ThunderID
+        if: always()
+        run: docker compose -f tests/e2e/thunderid/compose.yaml down -v

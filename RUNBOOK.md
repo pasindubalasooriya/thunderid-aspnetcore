@@ -975,7 +975,7 @@ Done before Step 2, because Step 2's sign-in needs them.
 - **Surprises, in order:**
   1. `APP-1039 Conflicting flow references`. ThunderID requires every flow that a bound flow CALLs to be the app's binding for that type. The default registration flow calls the *default* sign-in flow, so the app needed its own registration flow.
   2. My first diagnosis was wrong. I took it for handle ambiguity and switched the bindings to IDs, but the same error followed. Reading `inboundclient/service.go` found the real cause.
-  3. ThunderID's back-channel check rejects `localhost` and private IP literals, but hostnames "as written". So `host.docker.internal` passes with the default `reject_private_addresses: true`, and the overlay leaves it on.
+  3. ThunderID's back-channel check rejects `localhost` and private IP literals, but hostnames "as written". So `host.docker.internal` passes with the default `reject_private_addresses: true`, and the overlay leaves it on. **Corrected in Step 6:** that's only the registration check. At delivery, ThunderID resolves the host and refuses a private address, so the overlay does set `reject_private_addresses: false`.
   4. A port bound only to `127.0.0.1` on the host is reachable from the container through `host.docker.internal` (Docker Desktop): `200`.
   5. The hosted sign-in page renders inputs with the flow's `ref` as the element ID (`#username`, `#password`) and actions with their element ID (`#action_001`). The page object uses these flow identifiers; no CSS-class fallback is needed.
   6. `.gitignore`'s `*.e2e` (Visual Studio trace files) matched the `ThunderID.AspNetCore.E2E` folder through Windows' case-insensitive matching. Added `!tests/ThunderID.AspNetCore.E2E/`.
@@ -1009,3 +1009,38 @@ Done before Step 2, because Step 2's sign-in needs them.
   - Three runs, each after `docker compose down -v` and `up -d --wait`: 3 of 3 tests passed each time (17 to 18 s).
   - Mutation, in a scratch copy of `tests/e2e/thunderid`: with the registered redirect URI changed to `/signin-oidc-broken`, all 3 tests failed, timing out waiting for the sign-in page.
   - With the real files restored, 3 of 3 passed.
+
+### Step 6: E2E sign-out, back-channel logout and the nightly workflow (2026-11-05)
+
+- `SignOutTests`:
+  - `Sign_out_revokes_the_refresh_token_and_ends_the_session_at_thunderid`: sign in, keep the refresh token, click sign-out. Then:
+    - the result has no revocation failure;
+    - the saved refresh token gets `invalid_grant`;
+    - the home page says "Signed out";
+    - `/profile` asks for credentials again (no SSO), so ThunderID's session ended.
+  - `Back_channel_logout_ends_a_copy_of_the_session_elsewhere`: the app's cookie is copied into a second browser context, standing in for another tab or a stolen copy, and the first context signs out. Then:
+    - the callback receives the session's `sid` (ThunderID delivered the logout token);
+    - the copy's next request goes to ThunderID's sign-in page.
+- **Surprises, both in my provisioning:**
+  1. ThunderID's `/oauth2/logout` answered 500 "logout failed": "Sign-out flow is not configured for the application". The app now binds `signOutFlowId` to the default sign-out flow (`...006a`), which calls no other flow and doesn't prompt.
+  2. Back-channel delivery was refused: "host.docker.internal resolves to a private address 192.168.65.254". My Step 3 reading covered only the registration check. `deployment.yaml` now sets `oauth.logout.backchannel.reject_private_addresses: false`, with a comment.
+  - Before fixing the first, a temporary probe recorded the browser's redirects with token values masked. It showed the library's side was right: revocation succeeded, then a 302 to end-session with `id_token_hint`. The probe was removed.
+- **Test fix:** the sign-out helper waited for the home URL, which the page already had before the click. It now waits for "Signed out".
+- **Control,** in `%TEMP%\tidm6`, since deleted: with the library's cookie check replaced by a no-op, the back-channel test failed, timing out waiting for the sign-in page. So the copy is ended by the back-channel logout.
+- `E2EApp` reads `E2E_BACKCHANNEL_URL` (default `http://localhost:5201`). CI sets `http://0.0.0.0:5201`, because on Linux `host.docker.internal` is the Docker bridge.
+- `E2ETest` records a Playwright trace per browser context when `E2E_TRACE_DIR` is set.
+- **`.github/workflows/nightly-e2e.yml`:**
+  - runs at 02:30 UTC and on `workflow_dispatch`, with `contents: read`;
+  - restores the image from `actions/cache/restore` keyed by the full pin `46a6afc350d85201d75027f18257492875abbf0b`, or checks ThunderID out at the pin, builds it with the unpatched Dockerfile, and saves it;
+  - generates a throwaway `localhost` certificate and adds it to the runner's trust store;
+  - starts compose, builds the tests with `-warnaserror`, installs Chromium with dependencies, and runs the tests;
+  - on failure, prints ThunderID's log and uploads traces;
+  - always runs `down -v`.
+  - New pinned actions: `actions/cache/restore` and `actions/cache/save` v6.1.0 (`55cc834...`, released 2026-06-26) and `actions/upload-artifact` v7.0.2 (`cf430e0...`, released 2026-10-07).
+- **Verification:**
+  - Three runs, each after `docker compose down -v` and `up -d --wait`: 5 of 5 passed each time (32 to 33 s).
+  - The first run had `E2E_TRACE_DIR` set and wrote 7 traces, one per browser context.
+  - The workflow parses (15 steps) and every `uses:` is pinned to a 40-character SHA.
+- **Not verified yet:**
+  - **A3,** the image build time on a GitHub runner. The workflow logs it, and it can only be measured once the workflow is on `main` (Step 10).
+  - **The CI-only paths:** the runner's trust store, `0.0.0.0` on Linux, and `--with-deps`. These are first exercised by the Step 10 nightly run.

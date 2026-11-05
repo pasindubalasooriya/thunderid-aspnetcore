@@ -18,7 +18,6 @@ namespace ThunderID.AspNetCore.E2E;
 public sealed class E2EApp : IAsyncDisposable
 {
     public const string Url = "https://localhost:7201";
-    public const string BackchannelUrl = "http://localhost:5201";
     public const string Authority = "https://localhost:8091";
     public const string ClientId = "e2e-webapp";
 
@@ -37,7 +36,8 @@ public sealed class E2EApp : IAsyncDisposable
     public async Task StartAsync()
     {
         var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseUrls(Url, BackchannelUrl);
+        // On Linux, host.docker.internal is the Docker bridge, so CI listens on every interface.
+        builder.WebHost.UseUrls(Url, Environment.GetEnvironmentVariable("E2E_BACKCHANNEL_URL") ?? "http://localhost:5201");
 
         builder.Services.AddThunderID(options =>
         {

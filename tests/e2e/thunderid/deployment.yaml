@@ -81,3 +81,10 @@ jwt:
 passkey:
   allowed_origins:
     - "https://localhost:8091"
+
+oauth:
+  logout:
+    backchannel:
+      # The test app is reached through host.docker.internal, which resolves to a private
+      # address. ThunderID checks the resolved address at delivery, so this must be off here.
+      reject_private_addresses: false
