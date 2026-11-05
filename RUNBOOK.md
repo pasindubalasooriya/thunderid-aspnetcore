@@ -931,3 +931,26 @@ You asked to run Steps 0 to 7 without stopping, and to start before the two-week
   - calling it for rejected tokens failed 4;
   - letting its exception escape failed 1;
   - the original passed 134.
+
+### Step 1, completed (2026-11-05)
+
+- **Diagnosis:** a single 4.4 MB npm download took 2.03 s on the host and 2.45 s inside a container, so Docker's network isn't the bottleneck. The failures come from the frontend install's many parallel requests.
+- **The patched build (local only),** in `scratchpad/e2e-build/`:
+  - `Dockerfile.e2e-local` is ThunderID's Dockerfile with one step changed, appended to a copy of the build archive. The archive's own `Dockerfile` is byte-for-byte unchanged.
+  - The changed step adds cache mounts for the pnpm store, the pnpm metadata cache, the Go module cache and the Go build cache, plus 4 parallel requests, a 600 s fetch timeout and 5 retries.
+- **Attempt 5** failed after 406 s at 2,208 of 2,233 packages. The log still showed "2 retries left": pnpm 11.21 ignored the `npm_config_*` names. The store was kept in the cache.
+- **Attempt 6** used the `pnpm_config_*` names as well, and built in 601 s: 2,208 packages reused, 8 downloaded.
+- **The image:** `thunderid-e2e:46a6afc35`, ID `5d295a258512`, 312 MB on disk (111 MB content). `version.txt` says `v1.0.0`, the dist label; the source is the pin.
+- **The run:**
+  - `./setup.sh` ran on throwaway volumes `e2e-s1-db`, `e2e-s1-certs` and `e2e-s1-secrets`, with `ADMIN_PASSWORD` set to a fixed test-only value so no admin password is generated.
+  - The container was mapped to 8091, because the native ThunderID holds 8090.
+  - Server startup took 63 ms.
+- **Discovery:**
+  - `issuer` `https://localhost:8090`;
+  - `revocation_endpoint` `/oauth2/revoke`;
+  - `end_session_endpoint` `/oauth2/logout`;
+  - `backchannel_logout_supported: true` and `backchannel_logout_session_supported: true`;
+  - `grant_types_supported` includes `refresh_token`;
+  - `token_endpoint_auth_methods_supported` includes `client_secret_post`.
+- **It was the container that answered:** its logs show the discovery requests from `172.17.0.1`. With it stopped, 8091 refused connections (`000`); started again, it answered `200`.
+- **My mistake:** the first `setup.sh` output was filtered by a blocklist ("password"), so the generated `Direct-Auth-Secret` was printed to the session. It belonged to a throwaway container and never left this machine. I deleted the log and the three volumes and ran setup again on fresh ones; setup output is now filtered by an allowlist.
