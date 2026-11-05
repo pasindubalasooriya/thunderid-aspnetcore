@@ -136,6 +136,19 @@ and the small security gaps are closed.
 **Goal:** the behaviour that only a real server can show is tested automatically, and sign-out
 ends the session at ThunderID as well as locally.
 
+**Status (2026-11-05):** built in pull request #7. 0.2.0 isn't released yet, and the nightly run
+hasn't run on `main` yet.
+- The matrix is updated: 86 Meets, 20 Partial, 14 Gap, 37 N/A (gap report, "Status after
+  Phase 2").
+- Changes from the plan below:
+  - The suite drives a test app hosted in the test process, not the WebApp sample, so T6 stays
+    Partial. The test app exposes the refresh token and the back-channel callback to the tests,
+    and receives back-channel logout over plain HTTP from the container.
+  - ThunderID is set up through its `bootstrap` import rather than declarative resources, which
+    would have hidden its default flows and user schema.
+  - The back-channel result is a callback overload, `MapThunderIDBackchannelLogout(pattern,
+    onLoggedOut)`. It gives the `sid` and `sub`, but not a count of sessions ended.
+
 **End-to-end (G12: T6, T7, R4, AC7.5, AC7.6, AC7.8):**
 - Provision ThunderID from files in this repository: a container plus the application and user
   setup as configuration, with no console steps.
@@ -202,8 +215,9 @@ renaming in this phase.
   the new token set written in a single cookie update. `@thunderid/node` has
   `refreshAccessToken`, so this applies.
 - `getAccessToken` returns a refreshed token when the current one is near expiry.
-- Refresh needs a refresh token. Phase 2 measures whether ThunderID issues one, and with which
-  scope (`offline_access`).
+- Refresh needs a refresh token. Phase 2 measured it: ThunderID issues one when the app's grant
+  types include `refresh_token`, with the default scopes (no `offline_access`), and rotates it on
+  each refresh.
 
 **Operations (G6):**
 - `exchangeToken` (RFC 8693).

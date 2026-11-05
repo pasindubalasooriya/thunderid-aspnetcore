@@ -852,3 +852,219 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
   - The README fix: `using ThunderID.AspNetCore;` and `using ThunderID.AspNetCore.BackchannelLogout;` added to the code snippet in `README.md` and `src/ThunderID.AspNetCore/README.md`.
 - Check of the fix: the full `README.md` snippet, with its usings and wrapped in a minimal `Program.cs`, was compiled in scratch `snippetcheck/` against the nuget.org 0.1.0 package. `dotnet build`: 0 warnings, 0 errors.
 - No tag and no new version. nuget.org shows the old package README until the next release.
+
+## Phase 2: End-to-end suite and sign-out (0.2.0)
+
+Plan approved 2026-11-04: `C:\Users\pasin\.claude\plans\how-do-we-make-adaptive-liskov.md`, Steps 0 to 12. Your decisions:
+- the e2e ThunderID is built from a pinned `main` commit;
+- the browser tool is Microsoft.Playwright.
+
+You asked to run Steps 0 to 7 without stopping, and to start before the two-week wait (0.1.0 shipped today).
+
+### Step 0: Preflight (2026-11-04)
+
+- Repo: `main` equals `origin/main`, with 0 commits ahead or behind. PR #6 is open and mergeable, **not merged**.
+- **Deviation:** `phase-2` is branched from `phase-1-records` (PR #6's branch), so the records stay continuous. After #6 is squash-merged, it gets `git rebase --onto main phase-1-records phase-2`.
+- Open PRs #2 to #5 (Dependabot, test packages): out of scope, left alone.
+- `dotnet test`: 120 passed.
+- **Surprise:** `git fetch upstream` hung for over 5 minutes, and `timeout 90` didn't stop it (Git Bash's `timeout` doesn't stop git's child processes on Windows). `gh api` calls to GitHub were reset ("An existing connection was forcibly closed by the remote host") 3 times out of 6. The network to GitHub is unreliable today.
+  - GitHub's API reports upstream `main` as `2b09d0851` (17:14 UTC). The local `upstream/main`, fetched earlier today, is `46a6afc35`.
+- **ThunderID pin: `46a6afc350d85201d75027f18257492875abbf0b`** (2026-11-04, "Merge pull request #6343"), chosen because it's already local and checkable offline.
+  - At the pin: `spec.md` `64c9b69`, `threat-model.md` `233ecf6`, `SKILL.md` `e6ff612`, the same as Phase 1, so no rows need re-judging.
+  - `8fdea9d44` and `4c52caab4` (back-channel logout) are ancestors of the pin, and the `Dockerfile` is present.
+- Docker: `docker info` gives 29.6.1, linux, 6 CPUs, 11 GB. You started Docker Desktop.
+
+### Step 1: The pinned ThunderID image (2026-11-04, in progress)
+
+- Source: `git -c core.autocrlf=false archive --format=tar 46a6afc35`, 167 MB, in the scratchpad. It's piped to `docker build -t thunderid-e2e:46a6afc35 -` as the build context. Nothing is extracted on Windows, which avoids long-path and CRLF problems, and ThunderID's working folder isn't touched.
+- **Failure 1:** the build stopped after 25 s, because Docker couldn't reach Docker Hub: `alpine:3.23: failed to resolve source metadata ... TLS handshake timeout`. It's the same unreliable network as in Step 0.
+- Retry: `alpine:3.23` pulled on the first attempt; `golang:1.27-alpine3.23` failed 3 times. You said the network would be fixed in 10 minutes, so a background job waits 10 minutes, retries the pull 5 times, then builds.
+- Retry 1 (after the wait): `golang:1.27-alpine3.23` pulled on the first attempt. The build failed after 282 s in the runtime stage's `apk add` (exit 10): "fetching .../APKINDEX.tar.gz: I/O error", then "DNS: transient error".
+- A connectivity check right after: the Alpine CDN, `proxy.golang.org` and `registry.npmjs.org` all gave 200.
+- Retry 2: failed after 464 s in `./build.sh build linux amd64`. The Go compile ran. pnpm resolved 2233 packages, with npm requests taking about 77 s each (`[WARN] Request took 77204ms`), and then `TimeoutError: The operation was aborted due to timeout`.
+- **Stopped:** three network failures in a row. The image isn't built.
+- Read ahead offline from the pin, for Step 3:
+  - `config/resources/*.yaml` loads `application`, `flow` and `user` at startup when `declarative_resources.enabled`;
+  - `default-flow` (AUTHENTICATION) has no SSO check or session step, so the e2e flow is modelled on `console-app-flow` (`SSOCheckExecutor`, then `SessionExecutor`);
+  - `default-flow` (REGISTRATION) exists, for sign-up;
+  - the flow's element IDs are `input_001`, `input_002`, `action_001` and `action_signup`.
+- Container networking, for Step 3:
+  - back-channel delivery from the container goes to `host.docker.internal` over HTTP on 5101;
+  - the native install's TLS cert (CN `localhost`, SAN `localhost` and `127.0.0.1`, valid to 2027-10-17, already trusted here) can be mounted for local runs.
+
+**Attempt 4 (2026-11-05, after the network was reported fixed):**
+- Single requests were fast first: npm 1.9 s, Docker Hub 1.1 s, the Alpine CDN 0.9 s, the Go proxy 0.4 s.
+- The build failed after 354 s in `build.sh`, as in attempt 3. pnpm had downloaded 2,206 of 2,233 packages, at 6 to 40 KiB/s each under parallel load, with `ETIMEDOUT` retries; then `[23] The operation was aborted due to timeout`.
+- ThunderID's Dockerfile has no cache mount for the pnpm store, so each attempt downloads every package again.
+
+**Order changed (your decision, 2026-11-05):** Steps 5 and 7 run first, because they need no network or Docker. Then the image is built from a patched copy of the Dockerfile (option 1), and Steps 1 to 4 and 6 follow.
+
+### Step 5: Sign-out that revokes (2026-11-05)
+
+- `src/ThunderID.AspNetCore/ThunderIDSignOutExtensions.cs` (the plan named a `SignOut/` folder; one file at the root keeps it in the `ThunderID.AspNetCore` namespace, like `AddThunderID`):
+  - `HttpContext.SignOutOfThunderIDAsync(redirectUri)` returns `ThunderIDSignOutResult` (`RevocationFailed`, `RevocationError`).
+  - The order:
+    1. Read the cookie session.
+    2. Revoke its `refresh_token` (or its `access_token` when there's none; Step 2 settles which ThunderID issues). The request goes to `revocation_endpoint` from the issuer-pinned configuration manager, with `client_secret_post`, capped at 10 seconds.
+    3. Clear the cookie.
+    4. Redirect to end-session.
+  - A failed revocation (unreachable, timeout, non-2xx, no `revocation_endpoint`, issuer mismatch) is logged without the token and returned in the result. It never stops the local sign-out.
+  - With no session: nothing is revoked, ThunderID isn't contacted, and the response redirects to `redirectUri`. Before this, ASP.NET Core redirected to end-session without `id_token_hint`.
+- **Surprise, found by a test:** when discovery fails, the OpenID Connect handler's end-session redirect throws after the cookie is cleared. In a real app, the exception handler then clears the response headers, so the cookie deletion would be lost. Now it's caught and logged, and the response redirects locally.
+- Sample: `Pages/Account/SignOut.cshtml.cs` uses it. `_Layout.cshtml` shows a `TempData` notice when revocation failed.
+- Tests: `SignOutTests`, 10 tests. 130 passed (120 before). The timeout test takes 10 seconds.
+- Mutations, in a scratch copy:
+  - clearing the cookie before revoking failed 2 tests;
+  - returning before the local sign-out when revocation fails failed 6;
+  - the original passed 130.
+
+### Step 7: Back-channel logout tells the app (2026-11-05)
+
+- `MapThunderIDBackchannelLogout(pattern, onLoggedOut)` is a new overload. The existing `MapThunderIDBackchannelLogout(pattern = "/backchannel-logout")` is unchanged, because adding an optional parameter to it would break binary compatibility with 0.1.0.
+- `BackchannelLogoutContext` (`BackchannelLogout/BackchannelLogoutContext.cs`) has `SessionId`, `Subject` and `HttpContext`, which gives access to services and `RequestAborted`.
+- The callback runs after the token is validated **and** recorded, so it never runs for a rejected or replayed token, or one the store failed to record.
+- An exception from the callback is logged, and ThunderID still gets 200. A 5xx would make ThunderID retry a token whose `jti` is already recorded as used.
+- The count of ended sessions isn't available: a cookie session ends on its next request. This is documented on `BackchannelLogoutContext`.
+- Tests: 4 new in `BackchannelLogoutEndpointTests`. 134 passed.
+- Mutations, in a scratch copy:
+  - calling the callback before the logout is recorded failed 2 tests;
+  - calling it for rejected tokens failed 4;
+  - letting its exception escape failed 1;
+  - the original passed 134.
+
+### Step 1, completed (2026-11-05)
+
+- **Diagnosis:** a single 4.4 MB npm download took 2.03 s on the host and 2.45 s inside a container, so Docker's network isn't the bottleneck. The failures come from the frontend install's many parallel requests.
+- **The patched build (local only),** in `scratchpad/e2e-build/`:
+  - `Dockerfile.e2e-local` is ThunderID's Dockerfile with one step changed, appended to a copy of the build archive. The archive's own `Dockerfile` is byte-for-byte unchanged.
+  - The changed step adds cache mounts for the pnpm store, the pnpm metadata cache, the Go module cache and the Go build cache, plus 4 parallel requests, a 600 s fetch timeout and 5 retries.
+- **Attempt 5** failed after 406 s at 2,208 of 2,233 packages. The log still showed "2 retries left": pnpm 11.21 ignored the `npm_config_*` names. The store was kept in the cache.
+- **Attempt 6** used the `pnpm_config_*` names as well, and built in 601 s: 2,208 packages reused, 8 downloaded.
+- **The image:** `thunderid-e2e:46a6afc35`, ID `5d295a258512`, 312 MB on disk (111 MB content). `version.txt` says `v1.0.0`, the dist label; the source is the pin.
+- **The run:**
+  - `./setup.sh` ran on throwaway volumes `e2e-s1-db`, `e2e-s1-certs` and `e2e-s1-secrets`, with `ADMIN_PASSWORD` set to a fixed test-only value so no admin password is generated.
+  - The container was mapped to 8091, because the native ThunderID holds 8090.
+  - Server startup took 63 ms.
+- **Discovery:**
+  - `issuer` `https://localhost:8090`;
+  - `revocation_endpoint` `/oauth2/revoke`;
+  - `end_session_endpoint` `/oauth2/logout`;
+  - `backchannel_logout_supported: true` and `backchannel_logout_session_supported: true`;
+  - `grant_types_supported` includes `refresh_token`;
+  - `token_endpoint_auth_methods_supported` includes `client_secret_post`.
+- **It was the container that answered:** its logs show the discovery requests from `172.17.0.1`. With it stopped, 8091 refused connections (`000`); started again, it answered `200`.
+- **My mistake:** the first `setup.sh` output was filtered by a blocklist ("password"), so the generated `Direct-Auth-Secret` was printed to the session. It belonged to a throwaway container and never left this machine. I deleted the log and the three volumes and ran setup again on fresh ones; setup output is now filtered by an allowlist.
+
+### Step 3: Provisioning files and the E2E project (2026-11-05)
+
+Done before Step 2, because Step 2's sign-in needs them.
+
+- **Deviation, simpler than the plan:** the e2e resources are a bootstrap file, not declarative resources.
+  - ThunderID's `setup.sh` imports every YAML file under `bootstrap/` with upsert, so a mounted `bootstrap/10-e2e.yaml` lands in the database next to the defaults.
+  - Turning `declarative_resources.enabled` on would have made each store file-only and hidden the default flows, organization unit and user schema (`internal/application/config.go` at the pin).
+  - No API token or store mode is needed.
+- `tests/e2e/thunderid/`:
+  - `deployment.yaml` is the image's own file with two lines changed: `public_url` and the passkey origin moved to 8091. It holds no secret values; both secret settings are `file://` references.
+  - `bootstrap/10-e2e.yaml` has:
+    - `e2e-auth-flow`: an SSO check, credentials, `SessionExecutor`, authorization and assert, plus a sign-up branch;
+    - `e2e-registration-flow`: generated from the pinned default registration flow by `scratchpad/e2e-build/regflow.py`, changing only its ID, name, handle and final CALL;
+    - the `e2e-webapp` client: `client_secret_post`, PKCE, `authorization_code` and `refresh_token`, back-channel URI `http://host.docker.internal:5201/backchannel-logout`;
+    - the `e2e-user` user.
+  - `compose.yaml` binds `127.0.0.1:8091`, maps `host.docker.internal` to `host-gateway`, and runs `setup.sh` (its output kept inside the container, since it prints a generated secret) then `start.sh`. The TLS certificate comes from `E2E_TLS_DIR`.
+  - `README.md` has the test-only credentials warning and the local run steps.
+- **Surprises, in order:**
+  1. `APP-1039 Conflicting flow references`. ThunderID requires every flow that a bound flow CALLs to be the app's binding for that type. The default registration flow calls the *default* sign-in flow, so the app needed its own registration flow.
+  2. My first diagnosis was wrong. I took it for handle ambiguity and switched the bindings to IDs, but the same error followed. Reading `inboundclient/service.go` found the real cause.
+  3. ThunderID's back-channel check rejects `localhost` and private IP literals, but hostnames "as written". So `host.docker.internal` passes with the default `reject_private_addresses: true`, and the overlay leaves it on. **Corrected in Step 6:** that's only the registration check. At delivery, ThunderID resolves the host and refuses a private address, so the overlay does set `reject_private_addresses: false`.
+  4. A port bound only to `127.0.0.1` on the host is reachable from the container through `host.docker.internal` (Docker Desktop): `200`.
+  5. The hosted sign-in page renders inputs with the flow's `ref` as the element ID (`#username`, `#password`) and actions with their element ID (`#action_001`). The page object uses these flow identifiers; no CSS-class fallback is needed.
+  6. `.gitignore`'s `*.e2e` (Visual Studio trace files) matched the `ThunderID.AspNetCore.E2E` folder through Windows' case-insensitive matching. Added `!tests/ThunderID.AspNetCore.E2E/`.
+  7. Playwright's driver files go past the 260-character path limit when built under the scratchpad, so the Step 2 control ran from `%TEMP%\tidm2`, which was then deleted.
+- **Ports:** the e2e app uses `https://localhost:7201` and `http://localhost:5201`, so it doesn't clash with the sample or the Phase 1 app on 7101.
+- **`tests/ThunderID.AspNetCore.E2E`:** xUnit plus `Microsoft.Playwright` 1.64.1, not in the solution, so `pr-builder.yml`'s `dotnet test` skips it.
+  - `E2EApp` hosts a small app on the library in the test process. The plan said the WebApp sample, but in-process hosting gives an HTTP back-channel port without weakening the sample's HTTPS redirection, and lets tests read the refresh token and the callback's calls.
+  - Test parallelization is off, because every test uses the same ports.
+- **Verification:**
+  - `docker compose down -v` then `up -d --wait`, from clean volumes: healthy in 3 to 4 s, several times.
+  - Discovery issuer `https://localhost:8091`; the certificate is trusted by Windows (PowerShell, no validation skip).
+  - `/oauth2/authorize` for `e2e-webapp` goes to `/gate/signin?applicationId=...e2e02`, and for an unknown client to `/gate/error?...Invalid+client_id`.
+  - 134 unit tests still pass.
+
+### Step 2: Refresh tokens and revocation (2026-11-05)
+
+- Measured by `RefreshTokenTests.ThunderID_issues_a_refresh_token_and_refuses_it_once_revoked`, which signs in through the browser against the Step 3 container. No token values are printed.
+- **A1 holds:** the token response carries a `refresh_token`. A refresh with it answers 200, with a rotated refresh token.
+- **A2 holds:** `/oauth2/revoke` with `client_secret_post` answers **200** for the rotated token, and a refresh with it then answers **400 `invalid_grant`**.
+- **Control,** in a scratch copy with the revocation call removed: the same refresh answered `OK` (`Expected: BadRequest, Actual: OK`). The refusal comes from the revocation.
+- So the sign-out's main path (revoke the refresh token) is the real one. The access-token fallback is only for clients without `refresh_token`.
+
+### Step 4: E2E sign-in and sign-up (2026-11-05)
+
+- `E2ETest` (base class) starts the in-process app and Chromium for each test. Each page gets a new browser context, so no cookies are shared.
+- `ThunderIDSignInPage.SignUpAsync` follows the sign-up link (`[data-action-ref=action_signup]`), then the registration flow's credentials prompt (`#username`, `#password`, `#action_credentials`), then its attributes prompt (`#email`, `#action_schema_attrs`). These are all flow identifiers. The user-type prompt doesn't appear, because the app allows only `person`.
+- `SignInTests`:
+  - `Sign_in_reaches_the_protected_page_with_the_users_claims`: `email`, `name`, `sub` and `sid` on the profile page.
+  - `Sign_up_creates_a_user_and_lands_signed_in`: a new user with a random username lands signed in with its email, and a fresh browser context then signs in as that user.
+- **Verification:**
+  - Three runs, each after `docker compose down -v` and `up -d --wait`: 3 of 3 tests passed each time (17 to 18 s).
+  - Mutation, in a scratch copy of `tests/e2e/thunderid`: with the registered redirect URI changed to `/signin-oidc-broken`, all 3 tests failed, timing out waiting for the sign-in page.
+  - With the real files restored, 3 of 3 passed.
+
+### Step 6: E2E sign-out, back-channel logout and the nightly workflow (2026-11-05)
+
+- `SignOutTests`:
+  - `Sign_out_revokes_the_refresh_token_and_ends_the_session_at_thunderid`: sign in, keep the refresh token, click sign-out. Then:
+    - the result has no revocation failure;
+    - the saved refresh token gets `invalid_grant`;
+    - the home page says "Signed out";
+    - `/profile` asks for credentials again (no SSO), so ThunderID's session ended.
+  - `Back_channel_logout_ends_a_copy_of_the_session_elsewhere`: the app's cookie is copied into a second browser context, standing in for another tab or a stolen copy, and the first context signs out. Then:
+    - the callback receives the session's `sid` (ThunderID delivered the logout token);
+    - the copy's next request goes to ThunderID's sign-in page.
+- **Surprises, both in my provisioning:**
+  1. ThunderID's `/oauth2/logout` answered 500 "logout failed": "Sign-out flow is not configured for the application". The app now binds `signOutFlowId` to the default sign-out flow (`...006a`), which calls no other flow and doesn't prompt.
+  2. Back-channel delivery was refused: "host.docker.internal resolves to a private address 192.168.65.254". My Step 3 reading covered only the registration check. `deployment.yaml` now sets `oauth.logout.backchannel.reject_private_addresses: false`, with a comment.
+  - Before fixing the first, a temporary probe recorded the browser's redirects with token values masked. It showed the library's side was right: revocation succeeded, then a 302 to end-session with `id_token_hint`. The probe was removed.
+- **Test fix:** the sign-out helper waited for the home URL, which the page already had before the click. It now waits for "Signed out".
+- **Control,** in `%TEMP%\tidm6`, since deleted: with the library's cookie check replaced by a no-op, the back-channel test failed, timing out waiting for the sign-in page. So the copy is ended by the back-channel logout.
+- `E2EApp` reads `E2E_BACKCHANNEL_URL` (default `http://localhost:5201`). CI sets `http://0.0.0.0:5201`, because on Linux `host.docker.internal` is the Docker bridge.
+- `E2ETest` records a Playwright trace per browser context when `E2E_TRACE_DIR` is set.
+- **`.github/workflows/nightly-e2e.yml`:**
+  - runs at 02:30 UTC and on `workflow_dispatch`, with `contents: read`;
+  - restores the image from `actions/cache/restore` keyed by the full pin `46a6afc350d85201d75027f18257492875abbf0b`, or checks ThunderID out at the pin, builds it with the unpatched Dockerfile, and saves it;
+  - generates a throwaway `localhost` certificate and adds it to the runner's trust store;
+  - starts compose, builds the tests with `-warnaserror`, installs Chromium with dependencies, and runs the tests;
+  - on failure, prints ThunderID's log and uploads traces;
+  - always runs `down -v`.
+  - New pinned actions: `actions/cache/restore` and `actions/cache/save` v6.1.0 (`55cc834...`, released 2026-06-26) and `actions/upload-artifact` v7.0.2 (`cf430e0...`, released 2026-10-07).
+- **Verification:**
+  - Three runs, each after `docker compose down -v` and `up -d --wait`: 5 of 5 passed each time (32 to 33 s).
+  - The first run had `E2E_TRACE_DIR` set and wrote 7 traces, one per browser context.
+  - The workflow parses (15 steps) and every `uses:` is pinned to a 40-character SHA.
+- **Not verified yet:**
+  - **A3,** the image build time on a GitHub runner. The workflow logs it, and it can only be measured once the workflow is on `main` (Step 10).
+  - **The CI-only paths:** the runner's trust store, `0.0.0.0` on Linux, and `--with-deps`. These are first exercised by the Step 10 nightly run.
+
+### Step 8: Push the branch and open the PR (2026-11-05)
+
+- PR #6 was merged as a merge commit (`a151c72`), not a squash, so its commit `6e1eed1` is on `main` as it was.
+- `phase-2` rebased onto `a151c72` with no conflicts: the 6 commits are now `a3d3c01` to `d26973c`. After the rebase: `dotnet test` 134 passed, and the E2E project built with `-warnaserror`, 0 warnings.
+- Pushed, and opened PR #7: https://github.com/pasindubalasooriya/thunderid-aspnetcore/pull/7 (6 commits, 23 files).
+- PR builder, run 41966134310, green in 54 s: build `0 Warning(s)`; test `Passed! - Failed: 0, Passed: 134, Skipped: 0, Total: 134`; `No vulnerable packages.` The PR builder doesn't run the end-to-end suite, as planned.
+
+### Step 9: Docs, release notes and records (2026-11-05)
+
+- Preflight: `spec.md` at the pin is still blob `64c9b69`.
+- csproj `Version` 0.2.0; `docs/release-notes/v0.2.0.md`, which `release.yml` requires for the tag.
+- README:
+  - "What's in the box" rows for `SignOutOfThunderIDAsync` and the callback overload, and the sign-out line in the snippet;
+  - new sections "Sign-out" and "Back-channel logout callback";
+  - "End-to-end tests", with the test-only credentials warning;
+  - the console registration asks for the refresh token grant;
+  - the test count is now 134, and the layout table lists the two e2e folders.
+- The README's new snippets compiled in a scratch web app referencing the library, with warnings as errors (`%TEMP%\tidsnip`, since deleted). This caught nothing, but my first draft of the short sign-out line returned the result from a minimal API lambda, which would have written it as JSON after the redirect; it was changed before the check.
+- Matrix rows changed (each with "**Phase 2:**" in its evidence): S12 to Partial; AC4.5, `signOut`, AC2.4b, T7, AC7.5, AC7.6 and AC7.8 to Meets; R4 and T6 to Partial; AC2.4, `handleBackchannelLogout`, T2 and T8 kept their status with new evidence.
+- **T6 is Partial, not Meets as the plan expected.** The spec says the suite "runs the sample against a real ThunderID server" (`spec.md:846-847`), and this one drives the in-process test app.
+- **R4 is Partial** until the nightly workflow passes on `main` (Step 10).
+- Recounted by script (`recount.py`): sections 29/6/1/12, 24/7/9/11, 33/7/4/14; whole matrix 157 rows, 86 Meets, 20 Partial, 14 Gap, 37 N/A. My first summary line for section 3 said 32 Meets and 5 Gap; corrected to 33 and 4 before writing, and the recount agrees with every summary line. All 67 acceptance criteria are still in the matrix.
+- Gap report: a "Status after Phase 2" section, including the threat review's interaction 05. `phases.md`: a Phase 2 status and the refresh-token measurement in Phase 4.

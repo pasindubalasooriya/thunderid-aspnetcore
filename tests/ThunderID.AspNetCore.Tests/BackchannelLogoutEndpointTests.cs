@@ -21,7 +21,7 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
     private readonly ListLoggerProvider _logs = new();
     private WebApplication? _app;
 
-    private async Task<(HttpClient Client, ILogoutSessionStore Store)> StartAsync(ILogoutSessionStore? store = null)
+    private async Task<(HttpClient Client, ILogoutSessionStore Store)> StartAsync(ILogoutSessionStore? store = null, Func<BackchannelLogoutContext, Task>? onLoggedOut = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -47,7 +47,14 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
 
         _app = builder.Build();
         _app.UseAuthentication();
-        _app.MapThunderIDBackchannelLogout();
+        if (onLoggedOut is null)
+        {
+            _app.MapThunderIDBackchannelLogout();
+        }
+        else
+        {
+            _app.MapThunderIDBackchannelLogout("/backchannel-logout", onLoggedOut);
+        }
 
         // Test-only endpoints: create a cookie session like the OIDC handler would, and report who is signed in.
         _app.MapPost("/test/signin", async (HttpContext context, string sid, string sub, long authTime) =>
@@ -303,6 +310,71 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
         await client.PostAsync("/backchannel-logout", Form(LogoutTokens.Create((h, _) => h["typ"] = "JWT")));
 
         Assert.Equal("01a18372-2364-7a2a-afe3-c0626b927850", await WhoAmIAsync(client, cookie));
+    }
+
+    // The callback
+
+    [Fact]
+    public async Task Callback_gets_the_ended_sid_and_sub_after_the_logout_is_recorded()
+    {
+        var calls = new List<(string? Sid, string? Sub, bool Recorded)>();
+        var store = new InMemoryLogoutSessionStore(TimeSpan.FromDays(14), new ManualTimeProvider(LogoutTokens.Now));
+        var (client, _) = await StartAsync(store, async c =>
+            calls.Add((c.SessionId, c.Subject, await store.IsSessionEndedAsync(c.SessionId, null, null))));
+
+        var response = await client.PostAsync("/backchannel-logout", Form(LogoutTokens.Create()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal([("01a18372-2364-7a2a-afe3-c0626b927850", "01a182da-b10c-764b-bcc3-4bf3f93282de", true)], calls);
+    }
+
+    [Fact]
+    public async Task Callback_gets_a_null_sid_for_a_sub_only_token()
+    {
+        var calls = new List<(string? Sid, string? Sub)>();
+        var (client, _) = await StartAsync(onLoggedOut: c =>
+        {
+            calls.Add((c.SessionId, c.Subject));
+            return Task.CompletedTask;
+        });
+
+        await client.PostAsync("/backchannel-logout", Form(LogoutTokens.Create((_, p) => p.Remove("sid"))));
+
+        Assert.Equal([((string?)null, "01a182da-b10c-764b-bcc3-4bf3f93282de")], calls);
+    }
+
+    [Fact]
+    public async Task Callback_is_not_called_for_a_rejected_replayed_or_unrecorded_token()
+    {
+        var calls = 0;
+        Func<BackchannelLogoutContext, Task> onLoggedOut = _ =>
+        {
+            calls++;
+            return Task.CompletedTask;
+        };
+        var (client, _) = await StartAsync(onLoggedOut: onLoggedOut);
+        var token = LogoutTokens.Create();
+
+        await client.PostAsync("/backchannel-logout", Form(LogoutTokens.Create((_, p) => p["nonce"] = "x")));
+        await client.PostAsync("/backchannel-logout", Form(token));
+        await client.PostAsync("/backchannel-logout", Form(token));
+        await _app!.DisposeAsync();
+        (client, _) = await StartAsync(new ThrowingStore(), onLoggedOut);
+        await client.PostAsync("/backchannel-logout", Form(LogoutTokens.Create()));
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task Throwing_callback_is_logged_and_still_returns_200()
+    {
+        var (client, store) = await StartAsync(onLoggedOut: _ => throw new InvalidOperationException("app cache unavailable"));
+
+        var response = await client.PostAsync("/backchannel-logout", Form(LogoutTokens.Create()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(await store.IsSessionEndedAsync("01a18372-2364-7a2a-afe3-c0626b927850", null, null));
+        Assert.Contains(_logs.Messages, m => m.StartsWith("The back-channel logout callback failed for sid 01a18372-2364-7a2a-afe3-c0626b927850") && m.Contains("app cache unavailable"));
     }
 
     public async ValueTask DisposeAsync()

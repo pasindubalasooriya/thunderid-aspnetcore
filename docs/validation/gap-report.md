@@ -47,6 +47,41 @@ as it was done; this section says what has changed since. The matrix rows Phase 
 
 Recounted by script from the matrix rows.
 
+## Status after Phase 2 (0.2.0)
+
+Phase 2 of [phases.md](../../phases.md), on 2026-11-05. The matrix rows Phase 2 changed carry
+"**Phase 2:**" in their evidence.
+
+| Gap | Now | How |
+|---|---|---|
+| G3 revoking sign-out | Closed | `HttpContext.SignOutOfThunderIDAsync` revokes the refresh token (or the access token) at ThunderID, then clears the cookie, then redirects to end-session. A failed revocation still clears the cookie and is returned to the caller (AC4.5, AC2.4, AC2.4b, `signOut`, the sign-out half of S12) |
+| G12 end-to-end suite | Partly closed | ThunderID is provisioned from files in the repository (T7, AC7.8), and a Playwright suite covers sign-in, sign-up, sign-out and back-channel logout by flow identifiers (AC7.5, AC7.6). R4 waits for the nightly workflow's first run on `main`. T6 stays Partial because the suite drives a test app hosted in the test process, not the quickstart sample |
+
+**Partial rows:**
+- S12 moved from Gap to Partial: only refresh is left (G4, Phase 4).
+- `handleBackchannelLogout` stays Partial. A callback now gives the app the `sid` and `sub`; the
+  number of sessions ended can't be known with cookie sessions, and its failures aren't documented
+  yet (E9, Phase 3).
+- T2 stays Partial. Revocation ordering is now pinned by a test; state comparison and the storage
+  default are still untested.
+
+**Threat review:** interaction 05 is now mitigated as the model expects. 05.1 (a refresh token
+left valid after sign-out) and residual risk 3 are covered by the revocation; 05.3 (revocation
+unreachable) is handled by clearing local state and reporting the failure. The review's text is
+left as it was done, like the sections below.
+
+| Section | Rows | Meets | Partial | Gap | N/A |
+|---|---|---|---|---|---|
+| 1. Security floor and back-channel logout | 48 | 29 | 6 | 1 | 12 |
+| 2. Client surface, configuration, framework integration, errors | 51 | 24 | 7 | 9 | 11 |
+| 3. Layering, packaging, modes, CI and release, testing, docs and samples | 58 | 33 | 7 | 4 | 14 |
+| **Total** | **157** | **86** | **20** | **14** | **37** |
+
+Recounted by script from the matrix rows.
+
+**Still open:** G4 (refresh), G5 (error model), G6 (operations), G15 (embedded mode), R2 (parity
+check), the docs site page from G13, and the rest of G12 (R4's first nightly run, and T6).
+
 ## 1. Classification
 
 The spec requires this decision before anything else ("Applying this specification", step 2,
