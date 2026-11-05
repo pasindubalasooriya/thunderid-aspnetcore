@@ -50,26 +50,26 @@ public static class BackchannelLogoutEndpoint
         if (!MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType)
             || !contentType.MediaType.Equals("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
         {
-            return Reject(logger, "content type is not application/x-www-form-urlencoded");
+            return Reject(logger, ThunderIDErrorCodes.BackchannelContentType, "content type is not application/x-www-form-urlencoded");
         }
 
         var body = await ReadCappedAsync(context.Request, context.RequestAborted);
         if (body is null)
         {
-            return Reject(logger, "body is too large");
+            return Reject(logger, ThunderIDErrorCodes.BackchannelBodyTooLarge, "body is too large");
         }
 
         var form = QueryHelpers.ParseQuery(body);
         if (!form.TryGetValue("logout_token", out var values) || values.Count != 1)
         {
-            return Reject(logger, "body must carry exactly one logout_token");
+            return Reject(logger, ThunderIDErrorCodes.BackchannelTokenCount, "body must carry exactly one logout_token");
         }
 
         var validator = context.RequestServices.GetRequiredService<LogoutTokenValidator>();
         var result = await validator.ValidateAsync(values[0], context.RequestAborted);
         if (!result.IsValid)
         {
-            return Reject(logger, result.Error!);
+            return Reject(logger, result.Error!.Code, result.Error.Message);
         }
 
         var token = result.Token!;
@@ -88,7 +88,7 @@ public static class BackchannelLogoutEndpoint
 
         if (!recorded)
         {
-            return Reject(logger, "jti was already used");
+            return Reject(logger, ThunderIDErrorCodes.LogoutTokenReplayed, "jti was already used");
         }
 
         logger.LogInformation("Back-channel logout recorded: sid {SessionId}, sub {Subject}", token.SessionId, token.Subject);
@@ -109,9 +109,9 @@ public static class BackchannelLogoutEndpoint
         return Results.Ok();
     }
 
-    private static IResult Reject(ILogger logger, string reason)
+    private static IResult Reject(ILogger logger, string code, string reason)
     {
-        logger.LogWarning("Back-channel logout rejected: {Reason}", reason);
+        logger.LogWarning("Back-channel logout rejected ({Code}): {Reason}", code, reason);
         return Results.BadRequest(new { error = "invalid_request", error_description = reason });
     }
 

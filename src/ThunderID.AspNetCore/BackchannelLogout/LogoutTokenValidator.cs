@@ -56,18 +56,28 @@ public sealed class LogoutTokenValidator
     {
         if (string.IsNullOrEmpty(logoutToken))
         {
-            return LogoutTokenValidationResult.Invalid("logout_token is missing");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenMissing, "logout_token is missing");
         }
 
         if (logoutToken.Length > MaxTokenLength)
         {
-            return LogoutTokenValidationResult.Invalid("logout_token is too large");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenTooLarge, "logout_token is too large");
         }
 
         TokenValidationResult result;
         try
         {
             var configuration = await _configurationManager.GetConfigurationAsync(cancellationToken);
+
+            // The handler reports an algorithm outside ValidAlgorithms as an invalid signature
+            // (IDX10511), so the header is checked first to name the failure correctly.
+            if (configuration.IdTokenSigningAlgValuesSupported.Count > 0
+                && _handler.CanReadToken(logoutToken)
+                && !configuration.IdTokenSigningAlgValuesSupported.Contains(new JsonWebToken(logoutToken).Alg))
+            {
+                return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenAlgorithm, "signing algorithm is not accepted");
+            }
+
             result = await _handler.ValidateTokenAsync(logoutToken, Parameters(configuration));
 
             if (!result.IsValid && result.Exception is SecurityTokenSignatureKeyNotFoundException)
@@ -82,12 +92,13 @@ public sealed class LogoutTokenValidator
         catch (DiscoveryIssuerMismatchException)
         {
             // Nothing in a discovery document that names another issuer can be trusted, keys included.
-            return LogoutTokenValidationResult.Invalid("discovery document was rejected: its issuer is not the configured authority");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.DiscoveryIssuerMismatch, "discovery document was rejected: its issuer is not the configured authority");
         }
 
         if (!result.IsValid)
         {
-            return LogoutTokenValidationResult.Invalid(Describe(result.Exception));
+            var (code, reason) = Describe(result.Exception);
+            return LogoutTokenValidationResult.Invalid(code, reason);
         }
 
         var jwt = (JsonWebToken)result.SecurityToken;
@@ -96,13 +107,13 @@ public sealed class LogoutTokenValidator
 
         if (!claims.TryGetProperty("iat", out var iatElement) || !iatElement.TryGetInt64(out var iat))
         {
-            return LogoutTokenValidationResult.Invalid("iat is missing");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenIssuedAt, "iat is missing");
         }
 
         var issuedAt = DateTimeOffset.FromUnixTimeSeconds(iat);
         if (issuedAt > _timeProvider.GetUtcNow() + _clockSkew)
         {
-            return LogoutTokenValidationResult.Invalid("iat is in the future");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenIssuedAt, "iat is in the future");
         }
 
         if (!claims.TryGetProperty("events", out var events)
@@ -110,25 +121,25 @@ public sealed class LogoutTokenValidator
             || !events.TryGetProperty(BackchannelLogoutEvent, out var logoutEvent)
             || logoutEvent.ValueKind != JsonValueKind.Object)
         {
-            return LogoutTokenValidationResult.Invalid("events has no back-channel logout member");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenEvent, "events has no back-channel logout member");
         }
 
         if (claims.TryGetProperty("nonce", out _))
         {
-            return LogoutTokenValidationResult.Invalid("nonce must not be present");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenNonce, "nonce must not be present");
         }
 
         var sessionId = StringClaim(claims, "sid");
         var subject = StringClaim(claims, "sub");
         if (sessionId is null && subject is null)
         {
-            return LogoutTokenValidationResult.Invalid("neither sid nor sub is present");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenNoSessionOrSubject, "neither sid nor sub is present");
         }
 
         var jwtId = StringClaim(claims, "jti");
         if (jwtId is null)
         {
-            return LogoutTokenValidationResult.Invalid("jti is missing");
+            return LogoutTokenValidationResult.Invalid(ThunderIDErrorCodes.LogoutTokenJwtIdMissing, "jti is missing");
         }
 
         return LogoutTokenValidationResult.Valid(new LogoutToken(
@@ -169,17 +180,21 @@ public sealed class LogoutTokenValidator
             : null;
 
     // Names the failed check without echoing any part of the token.
-    private static string Describe(Exception? exception) => exception switch
+    private (string Code, string Reason) Describe(Exception? exception) => exception switch
     {
-        SecurityTokenInvalidTypeException => "typ is not logout+jwt",
-        SecurityTokenInvalidIssuerException => "issuer does not match",
-        SecurityTokenInvalidAudienceException => "audience does not contain the client id",
-        SecurityTokenExpiredException or SecurityTokenNotYetValidException or SecurityTokenInvalidLifetimeException
-            or SecurityTokenNoExpirationException => "token is outside its lifetime",
-        SecurityTokenInvalidAlgorithmException => "signing algorithm is not accepted",
-        SecurityTokenSignatureKeyNotFoundException => "signing key is unknown",
-        SecurityTokenInvalidSignatureException => "signature is invalid",
-        SecurityTokenMalformedException => "logout_token is not a JWT",
-        _ => "logout_token is invalid",
+        SecurityTokenInvalidTypeException => (ThunderIDErrorCodes.LogoutTokenType, "typ is not logout+jwt"),
+        SecurityTokenInvalidIssuerException => (ThunderIDErrorCodes.LogoutTokenIssuer, "issuer does not match"),
+        SecurityTokenInvalidAudienceException => (ThunderIDErrorCodes.LogoutTokenAudience, "audience does not contain the client id"),
+        SecurityTokenNoExpirationException or SecurityTokenInvalidLifetimeException { Expires: null } => (ThunderIDErrorCodes.LogoutTokenExpired, "exp is missing"),
+        SecurityTokenNotYetValidException => (ThunderIDErrorCodes.LogoutTokenNotYetValid, "token is not valid yet"),
+        // The lifetime validator above reports both directions as this one exception.
+        SecurityTokenInvalidLifetimeException { NotBefore: var notBefore } when notBefore != DateTime.MinValue
+            && notBefore - _clockSkew > _timeProvider.GetUtcNow().UtcDateTime => (ThunderIDErrorCodes.LogoutTokenNotYetValid, "token is not valid yet"),
+        SecurityTokenExpiredException or SecurityTokenInvalidLifetimeException => (ThunderIDErrorCodes.LogoutTokenExpired, "token has expired"),
+        SecurityTokenInvalidAlgorithmException => (ThunderIDErrorCodes.LogoutTokenAlgorithm, "signing algorithm is not accepted"),
+        SecurityTokenSignatureKeyNotFoundException => (ThunderIDErrorCodes.LogoutTokenSigningKeyUnknown, "signing key is unknown"),
+        SecurityTokenInvalidSignatureException => (ThunderIDErrorCodes.LogoutTokenSignature, "signature is invalid"),
+        SecurityTokenMalformedException => (ThunderIDErrorCodes.LogoutTokenMalformed, "logout_token is not a JWT"),
+        _ => (ThunderIDErrorCodes.LogoutTokenInvalid, "logout_token is invalid"),
     };
 }

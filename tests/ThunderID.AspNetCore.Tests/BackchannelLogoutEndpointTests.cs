@@ -87,6 +87,9 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
         return await (await client.SendAsync(request)).Content.ReadAsStringAsync();
     }
 
+    private void AssertRejectionLogged(string code) =>
+        Assert.Contains(_logs.Messages, m => m.StartsWith($"Back-channel logout rejected ({code}): ", StringComparison.Ordinal));
+
     private static void AssertNoStore(HttpResponseMessage response) =>
         Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
 
@@ -145,6 +148,7 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         AssertNoStore(response);
         Assert.False(await store.IsSessionEndedAsync("01a18372-2364-7a2a-afe3-c0626b927850", null, null));
+        AssertRejectionLogged(ThunderIDErrorCodes.BackchannelContentType);
     }
 
     [Fact]
@@ -165,6 +169,7 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Contains("too large", await response.Content.ReadAsStringAsync());
+        AssertRejectionLogged(ThunderIDErrorCodes.BackchannelBodyTooLarge);
     }
 
     [Fact]
@@ -188,6 +193,7 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
         var response = await client.PostAsync("/backchannel-logout", new FormUrlEncodedContent([new("token", "x")]));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertRejectionLogged(ThunderIDErrorCodes.BackchannelTokenCount);
     }
 
     [Fact]
@@ -199,6 +205,7 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
         var response = await client.PostAsync("/backchannel-logout", new FormUrlEncodedContent([new("logout_token", token), new("logout_token", token)]));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertRejectionLogged(ThunderIDErrorCodes.BackchannelTokenCount);
     }
 
     // Token problems
@@ -212,8 +219,9 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         AssertNoStore(response);
-        Assert.Contains("nonce must not be present", await response.Content.ReadAsStringAsync());
+        Assert.Equal("""{"error":"invalid_request","error_description":"nonce must not be present"}""", await response.Content.ReadAsStringAsync());
         Assert.False(await store.IsSessionEndedAsync("01a18372-2364-7a2a-afe3-c0626b927850", null, null));
+        AssertRejectionLogged(ThunderIDErrorCodes.LogoutTokenNonce);
     }
 
     [Fact]
@@ -227,6 +235,7 @@ public sealed class BackchannelLogoutEndpointTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
         Assert.Contains("jti was already used", await replay.Content.ReadAsStringAsync());
+        AssertRejectionLogged(ThunderIDErrorCodes.LogoutTokenReplayed);
     }
 
     [Fact]
