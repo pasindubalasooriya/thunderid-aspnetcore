@@ -92,6 +92,7 @@ public static class ThunderIDAuthenticationExtensions
 
         services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, IssuerPinnedConfigurationManager.ForOpenIdConnect>();
         services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, SignInFailures.WrapRemoteFailure>();
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, OwnedAuthorizationParameters>();
         services.AddSingleton<IValidateOptions<OpenIdConnectOptions>, OpenIdConnectSettingsValidator>();
         services.AddHostedService(sp => new SettingsStartupCheck<OpenIdConnectOptions>(
             sp.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>(), OpenIdConnectDefaults.AuthenticationScheme));
