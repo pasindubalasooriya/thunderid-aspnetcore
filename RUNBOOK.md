@@ -1044,3 +1044,27 @@ Done before Step 2, because Step 2's sign-in needs them.
 - **Not verified yet:**
   - **A3,** the image build time on a GitHub runner. The workflow logs it, and it can only be measured once the workflow is on `main` (Step 10).
   - **The CI-only paths:** the runner's trust store, `0.0.0.0` on Linux, and `--with-deps`. These are first exercised by the Step 10 nightly run.
+
+### Step 8: Push the branch and open the PR (2026-11-05)
+
+- PR #6 was merged as a merge commit (`a151c72`), not a squash, so its commit `6e1eed1` is on `main` as it was.
+- `phase-2` rebased onto `a151c72` with no conflicts: the 6 commits are now `a3d3c01` to `d26973c`. After the rebase: `dotnet test` 134 passed, and the E2E project built with `-warnaserror`, 0 warnings.
+- Pushed, and opened PR #7: https://github.com/pasindubalasooriya/thunderid-aspnetcore/pull/7 (6 commits, 23 files).
+- PR builder, run 41966134310, green in 54 s: build `0 Warning(s)`; test `Passed! - Failed: 0, Passed: 134, Skipped: 0, Total: 134`; `No vulnerable packages.` The PR builder doesn't run the end-to-end suite, as planned.
+
+### Step 9: Docs, release notes and records (2026-11-05)
+
+- Preflight: `spec.md` at the pin is still blob `64c9b69`.
+- csproj `Version` 0.2.0; `docs/release-notes/v0.2.0.md`, which `release.yml` requires for the tag.
+- README:
+  - "What's in the box" rows for `SignOutOfThunderIDAsync` and the callback overload, and the sign-out line in the snippet;
+  - new sections "Sign-out" and "Back-channel logout callback";
+  - "End-to-end tests", with the test-only credentials warning;
+  - the console registration asks for the refresh token grant;
+  - the test count is now 134, and the layout table lists the two e2e folders.
+- The README's new snippets compiled in a scratch web app referencing the library, with warnings as errors (`%TEMP%\tidsnip`, since deleted). This caught nothing, but my first draft of the short sign-out line returned the result from a minimal API lambda, which would have written it as JSON after the redirect; it was changed before the check.
+- Matrix rows changed (each with "**Phase 2:**" in its evidence): S12 to Partial; AC4.5, `signOut`, AC2.4b, T7, AC7.5, AC7.6 and AC7.8 to Meets; R4 and T6 to Partial; AC2.4, `handleBackchannelLogout`, T2 and T8 kept their status with new evidence.
+- **T6 is Partial, not Meets as the plan expected.** The spec says the suite "runs the sample against a real ThunderID server" (`spec.md:846-847`), and this one drives the in-process test app.
+- **R4 is Partial** until the nightly workflow passes on `main` (Step 10).
+- Recounted by script (`recount.py`): sections 29/6/1/12, 24/7/9/11, 33/7/4/14; whole matrix 157 rows, 86 Meets, 20 Partial, 14 Gap, 37 N/A. My first summary line for section 3 said 32 Meets and 5 Gap; corrected to 33 and 4 before writing, and the recount agrees with every summary line. All 67 acceptance criteria are still in the matrix.
+- Gap report: a "Status after Phase 2" section, including the threat review's interaction 05. `phases.md`: a Phase 2 status and the refresh-token measurement in Phase 4.

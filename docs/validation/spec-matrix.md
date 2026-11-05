@@ -35,7 +35,7 @@ Judged as a **Framework Specific SDK for ASP.NET Core** (gap report, section 1),
 | S9 | Logout token: signature with an ID token algorithm, `typ` = `logout+jwt`, issuer exact, audience, `iat`/`exp` in tolerance, events member, no `nonce`, `sid` or `sub`. Can't be switched off. Bounded JWKS re-fetch. `jti` replay SHOULD be refused. Never logged (`:734-746`) | Meets | Tests: `Id_token_typ_is_rejected`, `Missing_typ_is_rejected`, `Signature_from_another_key_with_the_same_kid_is_rejected`, `Tampered_payload_is_rejected`, `Algorithm_not_used_for_id_tokens_is_rejected`, `Unsigned_alg_none_token_is_rejected`, `Wrong_issuer_is_rejected`, `Issuer_with_trailing_slash_is_rejected`, `Token_for_another_client_is_rejected`, `Expired_token_is_rejected`, `Iat_in_the_future_is_rejected`, `Missing_events_is_rejected`, `Nonce_is_rejected`, `Neither_sid_nor_sub_is_rejected`, `Unknown_kids_cannot_force_a_jwks_fetch_per_request`, `Same_jti_twice_is_a_replay`, `Logs_never_contain_the_token`. No option disables a check (`LogoutTokenValidator.cs:120-146`). Caveat: "exact" means exact against the **discovery** issuer, so S7 carries over (P5: a token from the real authority was rejected once discovery lied) |
 | S10 | Embedded credentials, HTTPS without loopback, certificate pinning SHOULD (`:748-753`) | N/A | No embedded mode |
 | S11 | Logging: codes and callback URLs with a code never logged; tokens masked; email and phone masked, before any caller logger (`:755-759`) | Partial | The SDK logs only `sid`, `sub` and rejection reasons (`BackchannelLogoutEndpoint.cs:69,78,84`, `BackchannelLogoutCookieValidator.cs:40`), never a token (test `Logs_never_contain_the_token`). ASP.NET Core's own request logging still writes the `/signin-oidc?code=...` URL at Information level. **Phase 1:** documented in README "Running in production" (`README.md:207-209`), but the SDK doesn't prevent it |
-| S12 | Sessions: refresh ahead of expiry, rotation, deduplication. Sign-out revokes server-side **before** clearing local state. Each session bound to the ID token's `sid` (`:761-765`) | **Gap** | Refresh: none. `AddThunderID` has no refresh handling (P3), so a session runs on the access token until it expires. Sign-out: the SDK has no sign-out operation; `samples/WebApp` clears the cookie and then redirects to end-session, with no revocation call. `sid` binding: meets (`MapInboundClaims = false` keeps `sid`; test `Cookie_for_the_ended_sid_is_refused_and_cleared`) |
+| S12 | Sessions: refresh ahead of expiry, rotation, deduplication. Sign-out revokes server-side **before** clearing local state. Each session bound to the ID token's `sid` (`:761-765`) | Partial | Refresh: none. `AddThunderID` has no refresh handling (P3), so a session runs on the access token until it expires (Phase 4). **Phase 2:** sign-out meets, see AC4.5. `sid` binding: meets (`MapInboundClaims = false` keeps `sid`; test `Cookie_for_the_ended_sid_is_refused_and_cleared`) |
 
 ### Back-channel logout handler requirements (`spec.md:482-516`)
 
@@ -60,7 +60,7 @@ Judged as a **Framework Specific SDK for ASP.NET Core** (gap report, section 1),
 | AC4.2 State mismatch fails, nothing stored | Meets (delegated) | P2 |
 | AC4.3 Default token storage is the platform's secure store | Partial | S1 |
 | AC4.4 ID token signature, issuer, audience, expiry and nonce validated | Meets (delegated) | P3, with the S7 issuer caveat |
-| AC4.5 Sign-out revokes server-side before clearing local state | **Gap** | S12. Note: `@thunderid/node` and `@thunderid/express` at `javascript-sdks` `f25c3526a` don't revoke on `signOut` either; revocation is a separate `revokeAccessToken` |
+| AC4.5Sign-out revokes server-side before clearing local state | Meets | **Phase 2:** `HttpContext.SignOutOfThunderIDAsync` POSTs the refresh token to the discovered `revocation_endpoint` with `client_secret_post`, then signs out of the cookie scheme, then of OpenID Connect (`ThunderIDSignOutExtensions.cs`). Unit: `Revokes_the_refresh_token_before_clearing_the_cookie_then_redirects_to_end_session` records the order; swapping it fails 2 tests. End-to-end: `Sign_out_revokes_the_refresh_token_and_ends_the_session_at_thunderid` (end-to-end), where the refresh token saved before sign-out then gets `invalid_grant`. The access token is revoked instead when there's no refresh token (`Revokes_the_access_token_when_the_session_has_no_refresh_token`) |
 | AC4.6 Non-HTTPS, non-loopback `baseUrl` fails before any network call | Meets (delegated) | P4: `http://idp.example.com` is rejected when the options are first resolved. It's stricter than the spec: `http://localhost:8090` is also rejected. P8: in a running app the options are first resolved on the first sign-in request, so that's when it fails, with no outbound call before it (see C6) |
 | AC4.6b Embedded mode with non-HTTPS | N/A | No embedded mode |
 | AC4.8 Discovery issuer mismatch fails, and no endpoint from that document is used | Meets | S7, `DiscoveryIssuerTests` |
@@ -109,6 +109,8 @@ The 7 Gap rows cover four underlying gaps:
 
 After Phase 1 (0.1.0): 28 Meets, 5 Partial, 3 Gap, 12 N/A. BCL-3b, AC9.2, S7, AC4.8 and BCL-8 moved to Meets. The 3 Gap rows are refresh (AC4.7) and the revoking sign-out (AC4.5), with S12 covering both. S1, S2 and S11 stay Partial; what ASP.NET Core leaves to the app is now documented.
 
+After Phase 2 (0.2.0): 29 Meets, 6 Partial, 1 Gap, 12 N/A. AC4.5 moved to Meets and S12 to Partial. The 1 Gap row is refresh (AC4.7), Phase 4.
+
 ## 2. Client surface, configuration, framework integration, errors (Step 4)
 
 The spec's contract is behavioural: names are canonical, and signatures follow the platform
@@ -126,7 +128,7 @@ name.
 | `getConfiguration` (`:373`) | Framework only: `IOptionsMonitor<OpenIdConnectOptions>` | Meets | P3 reads the effective settings this way; there's no ThunderID-shaped view. **Q3:** framework idioms are accepted |
 | `isLoading` (`:374`) | Absent | N/A | A server request has no loading state for the app to observe, and there's no background refresh. Q3: `@thunderid/node` and `@thunderid/express` at `javascript-sdks` `f25c3526a` don't implement it either (the base class throws "Method not implemented") |
 | `signIn` (`:380`) | `HttpContext.ChallengeAsync(OpenIdConnectDefaults.AuthenticationScheme)` | Meets | Behaviour: P1 (authorization code with PKCE). No `SignIn` operation; the sample calls the framework (`samples/WebApp/Pages/Account/SignIn.cshtml.cs:11`). **Q3:** framework idioms are accepted |
-| `signOut` (`:381`) | `SignOutAsync(Cookies, OpenIdConnect)` | Gap | No revocation (AC4.5). No operation; the sample calls the framework (`SignOut.cshtml.cs:13-16`). No-session case: P9, see AC2.4. Q3: `@thunderid/node` and `@thunderid/express` at `javascript-sdks` `f25c3526a` return the end-session URL without revoking, and offer `revokeAccessToken` separately. Kept as Gap because revocation is in the security floor (AC4.5) |
+| `signOut` (`:381`) | `HttpContext.SignOutOfThunderIDAsync(redirectUri)` | Meets | **Phase 2:** revokes, then clears local state, then redirects to end-session (AC4.5). No session: succeeds silently (AC2.4). Revocation unreachable: local state cleared and the failure returned in `ThunderIDSignOutResult` (AC2.4b). An `HttpContext` extension in the framework's idiom (Q3) |
 | `signUp` (`:382`) | Absent | N/A | **Q3:** not implemented by `@thunderid/node` and `@thunderid/express` at `javascript-sdks` `f25c3526a` (the base class throws "Method not implemented") |
 | `isSignedIn` (`:383`) | `User.Identity.IsAuthenticated` | Meets | Framework property. **Q3:** framework idioms are accepted |
 | `handleRedirectCallback` (`:384`) | Implicit at `/signin-oidc` | N/A | "Required wherever the SDK does not handle the callback implicitly". The OIDC handler does (P2) |
@@ -139,7 +141,7 @@ name.
 | Management operations (`:414-457`) | Absent | N/A | Optional (MAY) |
 | Organization operations (`:410-412`) | Absent | Meets | "MUST NOT ship a partial implementation": none shipped |
 | Operations beyond the set (`:404-408`) | `AddThunderIDApi`, `AddScopePolicy` | Meets | Allowed, but "MUST follow Cross-SDK parity and delivery", which hasn't happened yet. **Q4:** both are accepted; parity is followed when possible |
-| `handleBackchannelLogout` (`:477-481`) | `app.MapThunderIDBackchannelLogout(path)` | Partial | A route handler mounted at the app's path, which the spec allows (`:479-481`): meets. It validates and ends sessions (section 1). It doesn't return "the `sid`, the `sub`, and the number of sessions ended" to the app. `LogoutTokenValidator.ValidateAsync` returns `sid` and `sub`, but the count can't be known with cookie sessions, which end on their next request. Its failures aren't documented (E9) |
+| `handleBackchannelLogout` (`:477-481`) | `app.MapThunderIDBackchannelLogout(path)`, or `(path, onLoggedOut)` | Partial | A route handler mounted at the app's path, which the spec allows (`:479-481`): meets. It validates and ends sessions (section 1). **Phase 2:** the `onLoggedOut` overload gives the app the `sid` and `sub` after the logout is recorded (tests `Callback_gets_the_ended_sid_and_sub_after_the_logout_is_recorded`, `Callback_gets_a_null_sid_for_a_sub_only_token`, `Callback_is_not_called_for_a_rejected_replayed_or_unrecorded_token`, `Throwing_callback_is_logged_and_still_returns_200`). Still missing: the number of sessions ended, which can't be known with cookie sessions because they end on their next request (documented in the README), and documented failures (E9) |
 
 ### Configuration (`spec.md:291-360`)
 
@@ -185,8 +187,8 @@ name.
 | AC2.1 Names and returned concepts match other SDKs | Partial | Mapping table: 2 Meets, 8 Partial, 6 Gap, 3 N/A. After the decisions: 8 Meets, 2 Partial, 4 Gap, 5 N/A |
 | AC2.2 Same `signIn()` call site in either mode | N/A | Redirect only; embedded is documented as unsupported (`README.md:169-170`) |
 | AC2.3 An operation before `initialize()` fails with a distinct documented error | Partial | C7 |
-| AC2.4 `signOut()` with no session succeeds without raising | Meets (delegated) | P9: with no cookie, status 302 to `/oauth2/logout` with `post_logout_redirect_uri` and `state` and no `id_token_hint`; no exception, 0 outbound calls |
-| AC2.4b Revocation unreachable: local state cleared, caller told | **Gap** | There's no revocation to fail (AC4.5) |
+| AC2.4 `signOut()` with no session succeeds without raising | Meets | **Phase 2:** `Without_a_session_sign_out_succeeds_silently_without_contacting_thunderid`: no exception, no outbound call, a redirect to the given URI, and no failure reported. Before Phase 2, P9 showed the same for the framework's `SignOutAsync` |
+| AC2.4b Revocation unreachable: local state cleared, caller told | Meets | **Phase 2:** `Unreachable_revocation_still_clears_the_cookie_and_reports_the_failure`, `Revocation_refused_by_thunderid_is_reported`, `Revocation_that_times_out_is_reported`, `Missing_revocation_endpoint_is_reported`, `Unreachable_discovery_still_clears_the_cookie_and_redirects_locally`. Making the local sign-out depend on revocation fails 6 tests |
 | AC2.5 A UI framework SDK needs only its primary entry point | N/A | Judged as a server framework (gap report, section 1). Whether Razor Pages or Blazor makes it a UI platform is an open question there |
 | AC3.1 Errors carry message, code, origin | **Gap** | E1 |
 | AC3.2 API errors carry status code and text | **Gap** | E2 |
@@ -213,6 +215,8 @@ The 16 Gap rows come from six underlying gaps:
 After the decisions of 2026-11-04 (see "Decisions" at the end): 19 Meets, 8 Partial, 13 Gap, 11 N/A. The 13 Gap rows are the error model (6), `reInitialize`, `exchangeToken` and `decodeJwtToken` (3), the revoking sign-out (`signOut`, AC2.4b), C5 and F2. `signUp` and the profile operations became N/A, C2 became Partial, and six mapping rows and F3 became Meets.
 
 After Phase 1 (0.1.0): 22 Meets, 7 Partial, 11 Gap, 11 N/A. C5, C6 and F2 moved to Meets. The 11 Gap rows are the error model (6), `reInitialize`, `exchangeToken` and `decodeJwtToken` (3), and the revoking sign-out (`signOut`, AC2.4b). C2 stays Partial: the `Scopes` default is kept and documented.
+
+After Phase 2 (0.2.0): 24 Meets, 7 Partial, 9 Gap, 11 N/A. `signOut` and AC2.4b moved to Meets. `handleBackchannelLogout` stays Partial: the `sid` and `sub` reach the app, the count doesn't. The 9 Gap rows are the error model (6), and `reInitialize`, `exchangeToken` and `decodeJwtToken` (3).
 
 ## 3. Layering, packaging, modes, CI and release, testing, docs and samples (Step 5)
 
@@ -264,7 +268,7 @@ Evidence values added in this step:
 | R1 | Pull request pipeline that lints, builds and tests (`:808`) | Meets | **Phase 1:** `.github/workflows/pr-builder.yml`, on every pull request and push to `main`: restore, a vulnerable-package check, build with `-warnaserror` (the .NET analyzers are the lint; no format check), test, pack. First run green: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41823076901 |
 | R2 | The parity check as a required check (`:809`) | Gap | **Phase 1:** the caller of ThunderID's `sdk-parity-check.yml` was added, then removed by your decision not to create its labels (RUNBOOK, Phase 1, Step 9) |
 | R3 | Release pipeline that publishes on a version tag (`:810-811`) | Meets | **Phase 1:** `.github/workflows/release.yml` publishes on a `v*` tag on `main` with NuGet trusted publishing, after checking the tag against the csproj `Version`. Tag `v0.1.0` published `ThunderID.AspNetCore` 0.1.0 and its symbols, and created the GitHub release (https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41828692549); nuget.org lists 0.1.0 |
-| R4 | Nightly or scheduled end-to-end run against a real server (`:812`) | **Gap** | None |
+| R4 | Nightly or scheduled end-to-end run against a real server (`:812`) | Partial | **Phase 2:** `.github/workflows/nightly-e2e.yml` runs the end-to-end suite at 02:30 UTC and on demand, against a ThunderID built from pinned commit `46a6afc35`. It can only run once it's on `main`; Meets after its first green run |
 | R5 | AC5.1 to AC5.6 | N/A | They test how the parity check itself behaves, and that check lives in the ThunderID repository. This repository's part is R2 |
 
 ### Testing (`spec.md:821-866`, R7)
@@ -272,13 +276,13 @@ Evidence values added in this step:
 | ID | Rule | Status | Evidence |
 |---|---|---|---|
 | T1 | Every public operation has unit coverage for its success path and each error (`:832-833`) | Meets | Back-channel: every rejection reason has a test. `AddScopePolicy`: 10 tests, including its one error. **Phase 1:** `AddThunderID` and `AddThunderIDApi` failure cases: every configuration error and weakened setting in `StartupValidationTests` (21 tests), and the issuer mismatch in `DiscoveryIssuerTests` (7) |
-| T2 | Mandatory security behaviour pinned by a test that fails if it's removed (`:833-837`) | Partial | **Caught:** PKCE off (M1), logout `typ` (M5), logout issuer (M6), logout lifetime (M7b), `no-store` (M8), `sid` claim kept (M9). **Phase 1:** ID token issuer validation off (M2), audience off (M3) and nonce not required (M4) are now refused at startup; each mutation fails 30 tests. Also caught: the discovery issuer pin and the `sub`-only tolerance. **Still untested:** state comparison and the storage default, both delegated to ASP.NET Core. Refresh deduplication and revocation ordering don't exist to test |
+| T2 | Mandatory security behaviour pinned by a test that fails if it's removed (`:833-837`) | Partial | **Caught:** PKCE off (M1), logout `typ` (M5), logout issuer (M6), logout lifetime (M7b), `no-store` (M8), `sid` claim kept (M9). **Phase 1:** ID token issuer validation off (M2), audience off (M3) and nonce not required (M4) are now refused at startup; each mutation fails 30 tests. Also caught: the discovery issuer pin and the `sub`-only tolerance. **Still untested:** state comparison and the storage default, both delegated to ASP.NET Core. Refresh deduplication and revocation ordering don't exist to test **Phase 2:** revocation ordering on sign-out is pinned: revoking after the cookie is cleared fails 2 tests in `SignOutTests`. |
 | T3 | No network in unit tests (`:837-838`) | Meets | Server interactions are stubbed: `StaticConfigurationManager`, test server, `HttpMessageHandler` (`LogoutTokenValidatorTests.cs`, `BackchannelLogoutEndpointTests.cs`); no `new HttpClient(` in `tests/`. README: "87 tests, no network access" (`README.md:134`) |
 | T4 | Reference parity fixtures for reimplemented deterministic behaviour (`:840-844`) | N/A | The library reimplements none. The sample's initials (`samples/WebApp/UserDisplay.cs`) are sample code |
 | T5 | Component tests for UI components (`:829`) | N/A | No UI components |
-| T6 | End-to-end suite running the sample against a real server: sign-in, sign-out, sign-up, from a clean state, driven by flow element identifiers (`:846-850`) | **Gap** | None. The end-to-end runs so far are manual, recorded in RUNBOOK and `docs/blog/captures` |
-| T7 | The end-to-end server is provisioned from the repository, reproducibly on a developer machine (`:858-861`) | **Gap** | Setup is the manual console steps in `README.md:56-92` |
-| T8 | Unit tests on every pull request; end-to-end at least nightly (`:863-866`) | Partial | Unit tests on every pull request: meets, **Phase 1:** `pr-builder.yml` (R1). End-to-end: none yet (Phase 2) |
+| T6 | End-to-end suite running the sample against a real server: sign-in, sign-out, sign-up, from a clean state, driven by flow element identifiers (`:846-850`) | Partial | **Phase 2:** `tests/ThunderID.AspNetCore.E2E` (Microsoft.Playwright) covers sign-in, sign-up, sign-out and back-channel logout against a real ThunderID started from clean volumes, selecting ThunderID's page elements by flow identifiers (AC7.6). 5 of 5 passed in 3 runs from clean volumes. **Not the quickstart sample:** it drives `E2EApp`, a test app hosted in the test process, because the suite reads the refresh token and the callback from it, and the sample's HTTPS redirect blocks back-channel delivery over plain HTTP from the container (RUNBOOK, Phase 2, Step 3) |
+| T7 | The end-to-end server is provisioned from the repository, reproducibly on a developer machine (`:858-861`) | Meets | **Phase 2:** `tests/e2e/thunderid`: a compose file, a `deployment.yaml` overlay and a bootstrap file with the flows, app and test user, imported by ThunderID's own `setup.sh`. No console steps. Run locally from clean volumes 6 times (Steps 4 and 6) |
+| T8 | Unit tests on every pull request; end-to-end at least nightly (`:863-866`) | Partial | Unit tests on every pull request: meets, **Phase 1:** `pr-builder.yml` (R1). End-to-end nightly: **Phase 2:** the workflow exists (R4), first run pending |
 
 ### Documentation and samples (`spec.md:868-892`, R6)
 
@@ -310,10 +314,10 @@ Evidence values added in this step:
 | AC7.2 Removing a mandatory security behaviour fails a test | Partial | T2 |
 | AC7.3 Unit tests pass with no network | Meets | T3 |
 | AC7.4 Reference fixtures | N/A | T4 |
-| AC7.5 End-to-end sign-in, sign-out and sign-up from a clean state | **Gap** | T6 |
-| AC7.6 End-to-end selects elements by flow identifiers | **Gap** | T6. In redirect mode the sign-in page is ThunderID's own, so the identifiers come from its hosted page |
+| AC7.5 End-to-end sign-in, sign-out and sign-up from a clean state | Meets | **Phase 2:** `Sign_in_reaches_the_protected_page_with_the_users_claims`, `Sign_up_creates_a_user_and_lands_signed_in`, `Sign_out_revokes_the_refresh_token_and_ends_the_session_at_thunderid`, from clean volumes. Through `E2EApp`, not the sample (T6) |
+| AC7.6 End-to-end selects elements by flow identifiers | Meets | **Phase 2:** ThunderID's hosted page renders inputs with their flow `ref` and actions with their flow element ID. The page objects select `#username`, `#password`, `#email`, `#action_001`, `#action_credentials`, `#action_schema_attrs` and `[data-action-ref=action_signup]` (`ThunderIDPages.cs`), never visible text or structure |
 | AC7.7 Unit tests run on every pull request | Meets | T8, R1 |
-| AC7.8 End-to-end server provisioned from the repository | **Gap** | T7 |
+| AC7.8 End-to-end server provisioned from the repository | Meets | T7 |
 | AC8.1 Minimum platform version declared | Meets | K1 |
 | AC8.2 Platform product without Core Lib (Apple, Android) | N/A | K4 |
 | AC8.3 to AC8.6 Bridged SDK rules | N/A | K5 |
@@ -339,21 +343,23 @@ After the decisions of 2026-11-04 (see "Decisions" at the end): 16 Meets, 8 Part
 
 After Phase 1 (0.1.0): 29 Meets, 5 Partial, 10 Gap, 14 N/A. L2, L7, K1, K2, R1, R3, D5, D6, T1, AC1.1, AC1.4, AC6.5, AC7.1 and AC7.7 are Meets; T8 moved to Partial. The 10 Gap rows are the end-to-end suite (R4, T6, T7, AC7.5, AC7.6, AC7.8), the docs site page (D1, AC6.1), embedded mode (O2), and the parity check (R2), whose caller was removed.
 
+After Phase 2 (0.2.0): 33 Meets, 7 Partial, 4 Gap, 14 N/A. T7, AC7.5, AC7.6 and AC7.8 moved to Meets. R4 and T6 moved to Partial: R4 until the nightly run's first pass on `main`, and T6 because the suite drives a test app, not the sample. The 4 Gap rows are the docs site page (D1, AC6.1), embedded mode (O2), and the parity check (R2).
+
 ## Whole matrix (157 rows)
 
 After the decisions of 2026-11-04:
 
-| Status | Section 1 | Section 2 | Section 3 | Total | After Phase 1 (0.1.0) |
-|---|---|---|---|---|---|
-| Meets, including delegated and accepted deviations | 23 | 19 | 16 | 58 | 79 (28, 22, 29) |
-| Partial | 6 | 8 | 8 | 22 | 17 (5, 7, 5) |
-| Gap | 7 | 13 | 20 | 40 | 24 (3, 11, 10) |
-| N/A | 12 | 11 | 14 | 37 | 37 (12, 11, 14) |
-| Rows | 48 | 51 | 58 | 157 | 157 |
+| Status | Section 1 | Section 2 | Section 3 | Total | After Phase 1 (0.1.0) | After Phase 2 (0.2.0) |
+|---|---|---|---|---|---|---|
+| Meets, including delegated and accepted deviations | 23 | 19 | 16 | 58 | 79 (28, 22, 29) | 86 (29, 24, 33) |
+| Partial | 6 | 8 | 8 | 22 | 17 (5, 7, 5) | 20 (6, 7, 7) |
+| Gap | 7 | 13 | 20 | 40 | 24 (3, 11, 10) | 14 (1, 9, 4) |
+| N/A | 12 | 11 | 14 | 37 | 37 (12, 11, 14) | 37 (12, 11, 14) |
+| Rows | 48 | 51 | 58 | 157 | 157 | 157 |
 
 Before the decisions: 48 Meets, 29 Partial, 45 Gap, 35 N/A.
 
-Phase 1 rows carry "**Phase 1:**" in their evidence. The counts were recounted by script from the rows, not edited by hand.
+Phase 1 rows carry "**Phase 1:**" in their evidence, and Phase 2 rows "**Phase 2:**". The counts were recounted by script from the rows, not edited by hand.
 
 Coverage: all 67 acceptance criteria in the pinned `spec.md` (64 numbered, plus AC2.4b, AC4.1b and AC4.6b) appear in the matrix, checked by script.
 

@@ -1,7 +1,8 @@
 # ThunderID for ASP.NET Core
 
 Sign users in to ASP.NET Core apps with [ThunderID](https://github.com/thunder-id/thunderid), the
-open-source IAM stack, and log them out when their ThunderID session ends.
+open-source IAM stack, sign them out at ThunderID too, and log them out when their ThunderID
+session ends.
 
 ASP.NET Core already speaks OpenID Connect, so this library doesn't reimplement login. It sets the
 options ThunderID needs that differ from ASP.NET Core's defaults, and it adds the one piece ASP.NET
@@ -35,7 +36,8 @@ recorded deviation from the specification's layering rule; see the
 | API | What it does |
 |---|---|
 | `services.AddThunderID(...)` | Cookie + OpenID Connect sign-in with ThunderID's settings: `response_mode=query`, a nonce within ThunderID's 64-character limit, PKCE, short JWT claim names, a `name` fallback from `given_name` and `family_name`, and an optional RFC 8707 `resource`. Also registers the back-channel logout validator and session store. Checks its configuration when the app starts (see [Configuration](#configuration)). |
-| `app.MapThunderIDBackchannelLogout()` | `POST /backchannel-logout`. Validates ThunderID's `logout_token` and records the session as ended. The next request with that session's cookie is signed out. |
+| `HttpContext.SignOutOfThunderIDAsync(redirectUri)` | Signs out at ThunderID and locally: revokes the refresh token (or the access token, when there's no refresh token) at ThunderID's revocation endpoint, clears the cookie, then redirects to ThunderID's end-session endpoint. The cookie is cleared even when revocation fails, and the returned `ThunderIDSignOutResult` says so (see [Sign-out](#sign-out)). |
+| `app.MapThunderIDBackchannelLogout()` | `POST /backchannel-logout`. Validates ThunderID's `logout_token` and records the session as ended. The next request with that session's cookie is signed out. An overload takes a callback that receives the ended session's `sid` and `sub`. |
 | `services.AddThunderIDApi(...)` | JwtBearer for APIs, keeping claim names as they appear in the token. |
 | `AddScopePolicy(name, scopes...)` | Authorization policy for ThunderID's space-delimited `scope` claim, which `RequireClaim("scope", ...)` can't match. |
 | `ILogoutSessionStore` | Where ended sessions are kept. In memory by default; register your own to replace it. |
@@ -53,6 +55,7 @@ builder.Services.AddThunderID(options =>
 });
 // ...
 app.MapThunderIDBackchannelLogout("/backchannel-logout");
+app.MapPost("/signout", async (HttpContext context) => { await context.SignOutOfThunderIDAsync("/"); });
 
 // API
 builder.Services.AddThunderIDApi(options =>
@@ -100,7 +103,7 @@ This runs the two samples: `samples/WebApp` (Razor Pages, `https://localhost:710
 | Setting | Value |
 |---|---|
 | Application type | Web application, confidential, with a client secret |
-| Grant type | Authorization code, PKCE required |
+| Grant types | Authorization code, PKCE required, and refresh token (sign-out revokes it) |
 | Redirect URI | `https://localhost:7101/signin-oidc` |
 | Post-logout redirect URI | `https://localhost:7101/signout-callback-oidc` |
 | Back-channel logout URI | `https://localhost:7101/backchannel-logout` |
@@ -155,9 +158,21 @@ Refresh the first tab: you're signed out.
 dotnet test
 ```
 
-120 tests, no network access. They cover every logout token rejection rule, the session store,
-the endpoint (status codes, content type, body cap, `no-store`, cookie revocation), the scope
-policy, the discovery issuer check, and the configuration checks at startup.
+134 tests, no network access. They cover every logout token rejection rule, the session store,
+the endpoint (status codes, content type, body cap, `no-store`, cookie revocation) and its
+callback, sign-out (revocation before the cookie is cleared, and each way revocation can fail),
+the scope policy, the discovery issuer check, and the configuration checks at startup.
+
+### End-to-end tests
+
+`tests/ThunderID.AspNetCore.E2E` signs in, signs up, signs out and receives back-channel logout
+against a real ThunderID in Docker, with a Playwright browser. The ThunderID is built from a pinned
+commit and set up entirely from the files in `tests/e2e/thunderid`; its
+[README](tests/e2e/thunderid/README.md) has the steps. The credentials in those files are fixed
+**test-only** values for that container; never reuse them.
+
+They run every night in CI (`.github/workflows/nightly-e2e.yml`) and on demand, not on pull
+requests.
 
 ## Configuration
 
@@ -199,6 +214,56 @@ The specification's configuration keys, and what this package does with each:
 | `allowedExternalUrls` | Not applicable: the SDK never attaches tokens to outbound requests; your code does |
 | `organizationHandle`, `organizationChain` | Not supported |
 | `session`, `preferences`, `components`, `extensions` | Not applicable: browser and UI SDKs only |
+
+## Sign-out
+
+`SignOutOfThunderIDAsync` does, in order:
+
+1. Revokes the refresh token at ThunderID (RFC 7009), or the access token when there's no
+   refresh token. The revocation endpoint comes from the same discovery document as sign-in, so
+   the issuer check covers it too. It gives up after 10 seconds.
+2. Clears the session cookie, whatever happened in step 1.
+3. Redirects to ThunderID's end-session endpoint, which ends the ThunderID session and returns to
+   `redirectUri`.
+
+With no session, it revokes nothing and redirects to `redirectUri`, and the result reports no failure.
+
+If revocation fails, `RevocationFailed` is true and `RevocationError` says why. The user is still
+signed out locally, but the token stays valid at ThunderID until it expires, so tell the user or
+log it:
+
+```csharp
+app.MapPost("/signout", async (HttpContext context, ILogger<Program> logger) =>
+{
+    var result = await context.SignOutOfThunderIDAsync("/");
+    if (result.RevocationFailed)
+    {
+        logger.LogWarning("Signed out locally, but ThunderID didn't revoke the token: {Reason}", result.RevocationError);
+    }
+});
+```
+
+Don't write to the response after calling it: it has already set the redirect.
+
+ThunderID issues a refresh token only when the app's grant types include `refresh_token`. Without
+one, sign-out revokes the access token.
+
+## Back-channel logout callback
+
+To act when ThunderID ends a session, for example to clear a server-side cache for that user,
+pass a callback:
+
+```csharp
+app.MapThunderIDBackchannelLogout("/backchannel-logout", context =>
+{
+    // context.SessionId is the ended sid, context.Subject the sub; either may be null.
+    return Task.CompletedTask;
+});
+```
+
+It runs after the logout is recorded, and only for a valid token. If it throws, the exception is
+logged and ThunderID still gets `200`, because the session has already ended. It doesn't say how
+many sessions ended: cookie sessions end on their next request, so the count isn't known.
 
 ## Running in production
 
@@ -259,5 +324,7 @@ Exact commands and results are in [RUNBOOK.md](RUNBOOK.md).
 | `samples/WebApp` | Razor Pages app: profile, claims, call API, sign-out, back-channel logout |
 | `samples/Api` | Minimal API: `/public`, `/me`, `/billing` (needs `billing:read`) |
 | `tests/ThunderID.AspNetCore.Tests` | xUnit tests |
+| `tests/ThunderID.AspNetCore.E2E` | Playwright end-to-end tests |
+| `tests/e2e/thunderid` | The end-to-end ThunderID: compose file, configuration and test resources |
 | `docs/backchannel-logout.png` | The sequence diagram above (`.drawio` source alongside) |
 | `docs/blog` | Article draft, screenshots and captures |
