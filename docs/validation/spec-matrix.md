@@ -263,7 +263,7 @@ Evidence values added in this step:
 |---|---|---|---|
 | R1 | Pull request pipeline that lints, builds and tests (`:808`) | Meets | **Phase 1:** `.github/workflows/pr-builder.yml`, on every pull request and push to `main`: restore, a vulnerable-package check, build with `-warnaserror` (the .NET analyzers are the lint; no format check), test, pack. First run green: https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41823076901 |
 | R2 | The parity check as a required check (`:809`) | Gap | **Phase 1:** the caller of ThunderID's `sdk-parity-check.yml` was added, then removed by your decision not to create its labels (RUNBOOK, Phase 1, Step 9) |
-| R3 | Release pipeline that publishes on a version tag (`:810-811`) | Partial | **Phase 1:** `.github/workflows/release.yml` publishes on a `v*` tag on `main` with NuGet trusted publishing, after checking the tag against the csproj `Version`. Not yet run: the dry run follows the merge, and the first publish is Phase 1, Step 12 |
+| R3 | Release pipeline that publishes on a version tag (`:810-811`) | Meets | **Phase 1:** `.github/workflows/release.yml` publishes on a `v*` tag on `main` with NuGet trusted publishing, after checking the tag against the csproj `Version`. Tag `v0.1.0` published `ThunderID.AspNetCore` 0.1.0 and its symbols, and created the GitHub release (https://github.com/pasindubalasooriya/thunderid-aspnetcore/actions/runs/41828692549); nuget.org lists 0.1.0 |
 | R4 | Nightly or scheduled end-to-end run against a real server (`:812`) | **Gap** | None |
 | R5 | AC5.1 to AC5.6 | N/A | They test how the parity check itself behaves, and that check lives in the ThunderID repository. This repository's part is R2 |
 
@@ -337,7 +337,7 @@ The 22 Gap rows come from six underlying gaps:
 
 After the decisions of 2026-11-04 (see "Decisions" at the end): 16 Meets, 8 Partial, 20 Gap, 14 N/A. L1 and AC1.3 moved to Meets.
 
-After Phase 1 (0.1.0): 28 Meets, 6 Partial, 10 Gap, 14 N/A. L2, L7, K1, K2, R1, D5, D6, T1, AC1.1, AC1.4, AC6.5, AC7.1 and AC7.7 are Meets; R3 and T8 moved to Partial. The 10 Gap rows are the end-to-end suite (R4, T6, T7, AC7.5, AC7.6, AC7.8), the docs site page (D1, AC6.1), embedded mode (O2), and the parity check (R2), whose caller was removed. R3 becomes Meets when the release workflow has published (Phase 1, Step 12).
+After Phase 1 (0.1.0): 29 Meets, 5 Partial, 10 Gap, 14 N/A. L2, L7, K1, K2, R1, R3, D5, D6, T1, AC1.1, AC1.4, AC6.5, AC7.1 and AC7.7 are Meets; T8 moved to Partial. The 10 Gap rows are the end-to-end suite (R4, T6, T7, AC7.5, AC7.6, AC7.8), the docs site page (D1, AC6.1), embedded mode (O2), and the parity check (R2), whose caller was removed.
 
 ## Whole matrix (157 rows)
 
@@ -345,8 +345,8 @@ After the decisions of 2026-11-04:
 
 | Status | Section 1 | Section 2 | Section 3 | Total | After Phase 1 (0.1.0) |
 |---|---|---|---|---|---|
-| Meets, including delegated and accepted deviations | 23 | 19 | 16 | 58 | 78 (28, 22, 28) |
-| Partial | 6 | 8 | 8 | 22 | 18 (5, 7, 6) |
+| Meets, including delegated and accepted deviations | 23 | 19 | 16 | 58 | 79 (28, 22, 29) |
+| Partial | 6 | 8 | 8 | 22 | 17 (5, 7, 5) |
 | Gap | 7 | 13 | 20 | 40 | 24 (3, 11, 10) |
 | N/A | 12 | 11 | 14 | 37 | 37 (12, 11, 14) |
 | Rows | 48 | 51 | 58 | 157 | 157 |
