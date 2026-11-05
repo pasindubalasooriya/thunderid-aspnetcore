@@ -852,3 +852,68 @@ Plan: 14 checkpoints (Steps 0 to 13), one stop after each. Branch `phase-1`, one
   - The README fix: `using ThunderID.AspNetCore;` and `using ThunderID.AspNetCore.BackchannelLogout;` added to the code snippet in `README.md` and `src/ThunderID.AspNetCore/README.md`.
 - Check of the fix: the full `README.md` snippet, with its usings and wrapped in a minimal `Program.cs`, was compiled in scratch `snippetcheck/` against the nuget.org 0.1.0 package. `dotnet build`: 0 warnings, 0 errors.
 - No tag and no new version. nuget.org shows the old package README until the next release.
+
+## Phase 2: End-to-end suite and sign-out (0.2.0)
+
+Plan approved 2026-11-04: `C:\Users\pasin\.claude\plans\how-do-we-make-adaptive-liskov.md`, Steps 0 to 12. Your decisions:
+- the e2e ThunderID is built from a pinned `main` commit;
+- the browser tool is Microsoft.Playwright.
+
+You asked to run Steps 0 to 7 without stopping, and to start before the two-week wait (0.1.0 shipped today).
+
+### Step 0: Preflight (2026-11-04)
+
+- Repo: `main` equals `origin/main`, with 0 commits ahead or behind. PR #6 is open and mergeable, **not merged**.
+- **Deviation:** `phase-2` is branched from `phase-1-records` (PR #6's branch), so the records stay continuous. After #6 is squash-merged, it gets `git rebase --onto main phase-1-records phase-2`.
+- Open PRs #2 to #5 (Dependabot, test packages): out of scope, left alone.
+- `dotnet test`: 120 passed.
+- **Surprise:** `git fetch upstream` hung for over 5 minutes, and `timeout 90` didn't stop it (Git Bash's `timeout` doesn't stop git's child processes on Windows). `gh api` calls to GitHub were reset ("An existing connection was forcibly closed by the remote host") 3 times out of 6. The network to GitHub is unreliable today.
+  - GitHub's API reports upstream `main` as `2b09d0851` (17:14 UTC). The local `upstream/main`, fetched earlier today, is `46a6afc35`.
+- **ThunderID pin: `46a6afc350d85201d75027f18257492875abbf0b`** (2026-11-04, "Merge pull request #6343"), chosen because it's already local and checkable offline.
+  - At the pin: `spec.md` `64c9b69`, `threat-model.md` `233ecf6`, `SKILL.md` `e6ff612`, the same as Phase 1, so no rows need re-judging.
+  - `8fdea9d44` and `4c52caab4` (back-channel logout) are ancestors of the pin, and the `Dockerfile` is present.
+- Docker: `docker info` gives 29.6.1, linux, 6 CPUs, 11 GB. You started Docker Desktop.
+
+### Step 1: The pinned ThunderID image (2026-11-04, in progress)
+
+- Source: `git -c core.autocrlf=false archive --format=tar 46a6afc35`, 167 MB, in the scratchpad. It's piped to `docker build -t thunderid-e2e:46a6afc35 -` as the build context. Nothing is extracted on Windows, which avoids long-path and CRLF problems, and ThunderID's working folder isn't touched.
+- **Failure 1:** the build stopped after 25 s, because Docker couldn't reach Docker Hub: `alpine:3.23: failed to resolve source metadata ... TLS handshake timeout`. It's the same unreliable network as in Step 0.
+- Retry: `alpine:3.23` pulled on the first attempt; `golang:1.27-alpine3.23` failed 3 times. You said the network would be fixed in 10 minutes, so a background job waits 10 minutes, retries the pull 5 times, then builds.
+- Retry 1 (after the wait): `golang:1.27-alpine3.23` pulled on the first attempt. The build failed after 282 s in the runtime stage's `apk add` (exit 10): "fetching .../APKINDEX.tar.gz: I/O error", then "DNS: transient error".
+- A connectivity check right after: the Alpine CDN, `proxy.golang.org` and `registry.npmjs.org` all gave 200.
+- Retry 2: failed after 464 s in `./build.sh build linux amd64`. The Go compile ran. pnpm resolved 2233 packages, with npm requests taking about 77 s each (`[WARN] Request took 77204ms`), and then `TimeoutError: The operation was aborted due to timeout`.
+- **Stopped:** three network failures in a row. The image isn't built.
+- Read ahead offline from the pin, for Step 3:
+  - `config/resources/*.yaml` loads `application`, `flow` and `user` at startup when `declarative_resources.enabled`;
+  - `default-flow` (AUTHENTICATION) has no SSO check or session step, so the e2e flow is modelled on `console-app-flow` (`SSOCheckExecutor`, then `SessionExecutor`);
+  - `default-flow` (REGISTRATION) exists, for sign-up;
+  - the flow's element IDs are `input_001`, `input_002`, `action_001` and `action_signup`.
+- Container networking, for Step 3:
+  - back-channel delivery from the container goes to `host.docker.internal` over HTTP on 5101;
+  - the native install's TLS cert (CN `localhost`, SAN `localhost` and `127.0.0.1`, valid to 2027-10-17, already trusted here) can be mounted for local runs.
+
+**Attempt 4 (2026-11-05, after the network was reported fixed):**
+- Single requests were fast first: npm 1.9 s, Docker Hub 1.1 s, the Alpine CDN 0.9 s, the Go proxy 0.4 s.
+- The build failed after 354 s in `build.sh`, as in attempt 3. pnpm had downloaded 2,206 of 2,233 packages, at 6 to 40 KiB/s each under parallel load, with `ETIMEDOUT` retries; then `[23] The operation was aborted due to timeout`.
+- ThunderID's Dockerfile has no cache mount for the pnpm store, so each attempt downloads every package again.
+
+**Order changed (your decision, 2026-11-05):** Steps 5 and 7 run first, because they need no network or Docker. Then the image is built from a patched copy of the Dockerfile (option 1), and Steps 1 to 4 and 6 follow.
+
+### Step 5: Sign-out that revokes (2026-11-05)
+
+- `src/ThunderID.AspNetCore/ThunderIDSignOutExtensions.cs` (the plan named a `SignOut/` folder; one file at the root keeps it in the `ThunderID.AspNetCore` namespace, like `AddThunderID`):
+  - `HttpContext.SignOutOfThunderIDAsync(redirectUri)` returns `ThunderIDSignOutResult` (`RevocationFailed`, `RevocationError`).
+  - The order:
+    1. Read the cookie session.
+    2. Revoke its `refresh_token` (or its `access_token` when there's none; Step 2 settles which ThunderID issues). The request goes to `revocation_endpoint` from the issuer-pinned configuration manager, with `client_secret_post`, capped at 10 seconds.
+    3. Clear the cookie.
+    4. Redirect to end-session.
+  - A failed revocation (unreachable, timeout, non-2xx, no `revocation_endpoint`, issuer mismatch) is logged without the token and returned in the result. It never stops the local sign-out.
+  - With no session: nothing is revoked, ThunderID isn't contacted, and the response redirects to `redirectUri`. Before this, ASP.NET Core redirected to end-session without `id_token_hint`.
+- **Surprise, found by a test:** when discovery fails, the OpenID Connect handler's end-session redirect throws after the cookie is cleared. In a real app, the exception handler then clears the response headers, so the cookie deletion would be lost. Now it's caught and logged, and the response redirects locally.
+- Sample: `Pages/Account/SignOut.cshtml.cs` uses it. `_Layout.cshtml` shows a `TempData` notice when revocation failed.
+- Tests: `SignOutTests`, 10 tests. 130 passed (120 before). The timeout test takes 10 seconds.
+- Mutations, in a scratch copy:
+  - clearing the cookie before revoking failed 2 tests;
+  - returning before the local sign-out when revocation fails failed 6;
+  - the original passed 130.
