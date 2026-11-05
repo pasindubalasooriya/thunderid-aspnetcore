@@ -18,13 +18,25 @@ public static class BackchannelLogoutEndpoint
     /// must match the back-channel logout URI registered for the application.
     /// </summary>
     public static IEndpointConventionBuilder MapThunderIDBackchannelLogout(this IEndpointRouteBuilder endpoints, string pattern = "/backchannel-logout") =>
+        Map(endpoints, pattern, onLoggedOut: null);
+
+    /// <summary>
+    /// Receives ThunderID's back-channel logout notifications at <paramref name="pattern"/>, and calls
+    /// <paramref name="onLoggedOut"/> with the ended session's <c>sid</c> and <c>sub</c> once a logout
+    /// token is validated and recorded. It isn't called for a rejected or replayed token. If it throws,
+    /// the error is logged and ThunderID still gets 200, because the logout is already recorded.
+    /// </summary>
+    public static IEndpointConventionBuilder MapThunderIDBackchannelLogout(this IEndpointRouteBuilder endpoints, string pattern, Func<BackchannelLogoutContext, Task> onLoggedOut) =>
+        Map(endpoints, pattern, onLoggedOut);
+
+    private static IEndpointConventionBuilder Map(IEndpointRouteBuilder endpoints, string pattern, Func<BackchannelLogoutContext, Task>? onLoggedOut) =>
         // Passed as a Delegate so the returned IResult is written; the RequestDelegate overload would drop it.
-        endpoints.MapPost(pattern, (Func<HttpContext, Task<IResult>>)HandleAsync)
+        endpoints.MapPost(pattern, (Func<HttpContext, Task<IResult>>)(context => HandleAsync(context, onLoggedOut)))
             .AllowAnonymous()
             .DisableAntiforgery()
             .ExcludeFromDescription();
 
-    internal static async Task<IResult> HandleAsync(HttpContext context)
+    internal static async Task<IResult> HandleAsync(HttpContext context, Func<BackchannelLogoutContext, Task>? onLoggedOut = null)
     {
         // Every answer, including errors, must not be cached.
         context.Response.Headers.CacheControl = "no-store";
@@ -76,6 +88,20 @@ public static class BackchannelLogoutEndpoint
         }
 
         logger.LogInformation("Back-channel logout recorded: sid {SessionId}, sub {Subject}", token.SessionId, token.Subject);
+
+        if (onLoggedOut is not null)
+        {
+            try
+            {
+                await onLoggedOut(new BackchannelLogoutContext(context, token.SessionId, token.Subject));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A 5xx would make ThunderID retry a logout the store has already recorded as used.
+                logger.LogError(ex, "The back-channel logout callback failed for sid {SessionId}", token.SessionId);
+            }
+        }
+
         return Results.Ok();
     }
 

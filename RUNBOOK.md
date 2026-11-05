@@ -917,3 +917,17 @@ You asked to run Steps 0 to 7 without stopping, and to start before the two-week
   - clearing the cookie before revoking failed 2 tests;
   - returning before the local sign-out when revocation fails failed 6;
   - the original passed 130.
+
+### Step 7: Back-channel logout tells the app (2026-11-05)
+
+- `MapThunderIDBackchannelLogout(pattern, onLoggedOut)` is a new overload. The existing `MapThunderIDBackchannelLogout(pattern = "/backchannel-logout")` is unchanged, because adding an optional parameter to it would break binary compatibility with 0.1.0.
+- `BackchannelLogoutContext` (`BackchannelLogout/BackchannelLogoutContext.cs`) has `SessionId`, `Subject` and `HttpContext`, which gives access to services and `RequestAborted`.
+- The callback runs after the token is validated **and** recorded, so it never runs for a rejected or replayed token, or one the store failed to record.
+- An exception from the callback is logged, and ThunderID still gets 200. A 5xx would make ThunderID retry a token whose `jti` is already recorded as used.
+- The count of ended sessions isn't available: a cookie session ends on its next request. This is documented on `BackchannelLogoutContext`.
+- Tests: 4 new in `BackchannelLogoutEndpointTests`. 134 passed.
+- Mutations, in a scratch copy:
+  - calling the callback before the logout is recorded failed 2 tests;
+  - calling it for rejected tokens failed 4;
+  - letting its exception escape failed 1;
+  - the original passed 134.
