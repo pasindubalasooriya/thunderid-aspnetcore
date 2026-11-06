@@ -12,7 +12,14 @@ public abstract class E2ETest : IAsyncLifetime
     private IPlaywright? _playwright;
     private IBrowser? _browser;
 
-    protected E2EApp App { get; } = new();
+    protected E2ETest()
+        : this(new E2EApp())
+    {
+    }
+
+    protected E2ETest(E2EApp app) => App = app;
+
+    protected E2EApp App { get; }
 
     public async Task InitializeAsync()
     {

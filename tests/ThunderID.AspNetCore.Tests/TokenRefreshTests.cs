@@ -29,7 +29,7 @@ public sealed class TokenRefreshTests : IAsyncDisposable
     private readonly FakeTime _time = new();
     private WebApplication? _app;
 
-    private async Task<HttpClient> StartAsync(StubThunderID thunderID, TimeSpan? refreshBeforeExpiry = null, ILogoutSessionStore? store = null)
+    private async Task<HttpClient> StartAsync(StubThunderID thunderID, TimeSpan? refreshBeforeExpiry = null, ILogoutSessionStore? store = null, bool useAuthentication = true)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -56,7 +56,10 @@ public sealed class TokenRefreshTests : IAsyncDisposable
         builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme, options => options.BackchannelHttpHandler = thunderID);
 
         _app = builder.Build();
-        _app.UseAuthentication();
+        if (useAuthentication)
+        {
+            _app.UseAuthentication();
+        }
 
         // Test-only: a cookie session holding the tokens the OIDC handler would save.
         _app.MapPost("/test/signin", async (HttpContext context, int expiresIn, bool withRefreshToken) =>
@@ -87,6 +90,8 @@ public sealed class TokenRefreshTests : IAsyncDisposable
                 : SignedOut;
         });
 
+        _app.MapGet("/test/access-token", async (HttpContext context) => await context.GetThunderIDAccessTokenAsync() ?? SignedOut);
+
         await _app.StartAsync();
         return _app.GetTestClient();
     }
@@ -102,6 +107,17 @@ public sealed class TokenRefreshTests : IAsyncDisposable
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "/test/tokens");
         request.Headers.Add("Cookie", cookie);
+        return client.SendAsync(request);
+    }
+
+    private static Task<HttpResponseMessage> GetAccessTokenAsync(HttpClient client, string? cookie)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/test/access-token");
+        if (cookie is not null)
+        {
+            request.Headers.Add("Cookie", cookie);
+        }
+
         return client.SendAsync(request);
     }
 
@@ -385,6 +401,54 @@ public sealed class TokenRefreshTests : IAsyncDisposable
 
         Assert.Equal(SignedOut, await response.Content.ReadAsStringAsync());
         Assert.Empty(thunderID.TokenRequests);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetThunderIDAccessTokenAsync_returns_the_refreshed_token_and_the_cookie_is_rewritten(bool useAuthentication)
+    {
+        var thunderID = new StubThunderID();
+        var client = await StartAsync(thunderID, useAuthentication: useAuthentication);
+        var cookie = await SignInAsync(client);
+
+        var response = await GetAccessTokenAsync(client, cookie);
+
+        Assert.Equal(StubThunderID.NewAccessToken, await response.Content.ReadAsStringAsync());
+        var renewed = CookieOf(response);
+        Assert.NotNull(renewed);
+        Assert.Equal(StubThunderID.NewAccessToken, await (await GetAccessTokenAsync(client, renewed)).Content.ReadAsStringAsync());
+        Assert.Single(thunderID.TokenRequests);
+    }
+
+    [Fact]
+    public async Task GetThunderIDAccessTokenAsync_returns_the_current_token_when_no_refresh_is_due()
+    {
+        var thunderID = new StubThunderID();
+        var client = await StartAsync(thunderID);
+        var cookie = await SignInAsync(client, expiresIn: 3600);
+
+        Assert.Equal(AccessToken, await (await GetAccessTokenAsync(client, cookie)).Content.ReadAsStringAsync());
+        Assert.Empty(thunderID.TokenRequests);
+    }
+
+    [Fact]
+    public async Task GetThunderIDAccessTokenAsync_returns_null_without_a_session_or_after_a_refused_refresh()
+    {
+        var client = await StartAsync(new StubThunderID { Status = HttpStatusCode.BadRequest, Body = """{"error":"invalid_grant"}""" });
+        var cookie = await SignInAsync(client);
+
+        Assert.Equal(SignedOut, await (await GetAccessTokenAsync(client, null)).Content.ReadAsStringAsync());
+        Assert.Equal(SignedOut, await (await GetAccessTokenAsync(client, cookie)).Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task GetThunderIDAccessTokenAsync_returns_the_current_token_when_ThunderID_cannot_be_reached()
+    {
+        var client = await StartAsync(new StubThunderID { Failure = new HttpRequestException("connection refused") });
+        var cookie = await SignInAsync(client);
+
+        Assert.Equal(AccessToken, await (await GetAccessTokenAsync(client, cookie)).Content.ReadAsStringAsync());
     }
 
     public async ValueTask DisposeAsync()

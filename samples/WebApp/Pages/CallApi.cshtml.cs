@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using ThunderID.AspNetCore;
@@ -20,7 +19,7 @@ public class CallApiModel(IHttpClientFactory httpClientFactory, IConfiguration c
 
     public async Task OnGetAsync()
     {
-        var accessToken = await HttpContext.GetTokenAsync("access_token");
+        var accessToken = await HttpContext.GetThunderIDAccessTokenAsync();
         if (accessToken is null)
         {
             return;
