@@ -69,7 +69,7 @@ internal sealed class JwtBearerSettingsValidator : IValidateOptions<JwtBearerOpt
 
 // The settings every ThunderID app needs, checked after all of the app's configuration and before
 // ASP.NET Core's own post-configure. A failure is a ThunderID error, raised when the app starts.
-internal sealed class OpenIdConnectRequiredSettings : IPostConfigureOptions<OpenIdConnectOptions>
+internal sealed class OpenIdConnectRequiredSettings(IOptionsMonitor<TokenRefreshSettings> refresh) : IPostConfigureOptions<OpenIdConnectOptions>
 {
     public void PostConfigure(string? name, OpenIdConnectOptions options)
     {
@@ -83,6 +83,11 @@ internal sealed class OpenIdConnectRequiredSettings : IPostConfigureOptions<Open
         if (string.IsNullOrEmpty(options.ClientId))
         {
             failures.Add("ClientId is required.");
+        }
+
+        if (refresh.CurrentValue.RefreshBeforeExpiry < TimeSpan.Zero)
+        {
+            failures.Add("RefreshBeforeExpiry can't be negative.");
         }
 
         SettingsChecks.ThrowIfAny(failures);

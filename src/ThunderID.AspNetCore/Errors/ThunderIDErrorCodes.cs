@@ -64,8 +64,14 @@ public static class ThunderIDErrorCodes
 
     // Token refresh
 
-    /// <summary>ThunderID's token endpoint refused the refresh token, so the local session ends.</summary>
+    /// <summary>ThunderID's token endpoint refused the refresh token (a 4xx answer), so the local session ends.</summary>
     public const string RefreshRejected = "JS-AUTH_CORE-RAT2-HE04";
+
+    /// <summary>ThunderID's token endpoint answered the refresh with a server error (5xx). The session is kept.</summary>
+    public const string RefreshServerError = "ASPNETCORE-REFRESH-RAT-HE01";
+
+    /// <summary>ThunderID's token endpoint answered the refresh with something that isn't a token response. The session is kept.</summary>
+    public const string RefreshResponseInvalid = "ASPNETCORE-REFRESH-RAT-IV01";
 
     /// <summary>ThunderID's token endpoint couldn't be reached to refresh the tokens. The session is kept.</summary>
     public const string RefreshUnreachable = "JS-AUTH_CORE-RAT2-NR03";

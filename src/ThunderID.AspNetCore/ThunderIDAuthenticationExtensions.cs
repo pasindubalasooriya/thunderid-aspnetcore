@@ -41,13 +41,17 @@ public static class ThunderIDAuthenticationExtensions
             return new LogoutTokenValidator(oidc.ConfigurationManager!, oidc.ClientId!);
         });
 
+        services.Configure<TokenRefreshSettings>(refresh => refresh.RefreshBeforeExpiry = settings.RefreshBeforeExpiry);
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<TokenRefresher>();
+
         var builder = services
             .AddAuthentication(options =>
             {
                 options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
             })
-            .AddCookie(options => options.Events.OnValidatePrincipal = BackchannelLogoutCookieValidator.ValidatePrincipalAsync)
+            .AddCookie(options => options.Events.OnValidatePrincipal = ValidateSessionAsync)
             .AddOpenIdConnect(options =>
             {
                 options.Authority = settings.Authority;
@@ -127,6 +131,16 @@ public static class ThunderIDAuthenticationExtensions
         services.AddHostedService(sp => new SettingsStartupCheck<JwtBearerOptions>(
             sp.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>(), JwtBearerDefaults.AuthenticationScheme));
         return builder;
+    }
+
+    // A session ThunderID ended is refused before anything else, so its tokens are never refreshed.
+    private static async Task ValidateSessionAsync(CookieValidatePrincipalContext context)
+    {
+        await BackchannelLogoutCookieValidator.ValidatePrincipalAsync(context);
+        if (context.Principal is not null)
+        {
+            await context.HttpContext.RequestServices.GetRequiredService<TokenRefresher>().RefreshIfDueAsync(context);
+        }
     }
 
     // Present only when AddThunderID ran, so an operation used without it can fail with a ThunderID error.
