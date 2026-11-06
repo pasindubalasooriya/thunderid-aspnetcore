@@ -228,7 +228,7 @@ internal sealed partial class TokenRefresher(
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } s ? s : null;
 
     // ThunderID's OAuth error code, such as invalid_grant, when it's a plain code; never the description.
-    private static string ErrorCode(string body)
+    internal static string ErrorCode(string body)
     {
         try
         {

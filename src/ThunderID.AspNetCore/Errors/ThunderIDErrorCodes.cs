@@ -102,6 +102,9 @@ public static class ThunderIDErrorCodes
     /// <summary>ThunderID's token endpoint didn't answer the exchange in time.</summary>
     public const string TokenExchangeTimedOut = "ASPNETCORE-TOKEN_EXCHANGE-EXC-NE01";
 
+    /// <summary>ThunderID's token endpoint answered the exchange without an access token.</summary>
+    public const string TokenExchangeResponseInvalid = "ASPNETCORE-TOKEN_EXCHANGE-EXC-IV02";
+
     // Decoding
 
     /// <summary>The value given to <c>ThunderIDJwt.DecodeUnverified</c> isn't a JWT with a JSON payload.</summary>

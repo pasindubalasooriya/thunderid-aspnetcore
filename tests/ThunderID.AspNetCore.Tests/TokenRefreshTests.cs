@@ -497,8 +497,12 @@ public sealed class TokenRefreshTests : IAsyncDisposable
 
         public ConcurrentQueue<Dictionary<string, string>> TokenRequests { get; } = new();
 
+        /// <summary>Every path requested, discovery included.</summary>
+        public ConcurrentQueue<string> Paths { get; } = new();
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            Paths.Enqueue(request.RequestUri!.AbsolutePath);
             switch (request.RequestUri!.AbsolutePath)
             {
                 case "/.well-known/openid-configuration":
@@ -510,7 +514,7 @@ public sealed class TokenRefreshTests : IAsyncDisposable
                     return Json(LogoutTokens.Jwks(LogoutTokens.SigningKey, LogoutTokens.KeyId));
                 case "/oauth2/token":
                     var form = (await request.Content!.ReadAsStringAsync(cancellationToken)).Split('&')
-                        .Select(p => p.Split('=', 2)).ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p[1]));
+                        .Select(p => p.Split('=', 2)).ToDictionary(p => Decode(p[0]), p => Decode(p[1]));
                     TokenRequests.Enqueue(form);
                     if (Hangs)
                     {
@@ -531,6 +535,9 @@ public sealed class TokenRefreshTests : IAsyncDisposable
 
         private static HttpResponseMessage Json(string body) =>
             new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+        // application/x-www-form-urlencoded writes a space as '+'.
+        private static string Decode(string value) => Uri.UnescapeDataString(value.Replace('+', ' '));
     }
 
     private sealed class ListLoggerProvider : ILoggerProvider

@@ -84,6 +84,20 @@ public sealed class E2EApp : IAsyncDisposable
             "<dl>" + string.Concat(context.User.Claims.Select(c => $"""<dt>{Encode(c.Type)}</dt><dd id="claim-{Encode(c.Type)}">{Encode(c.Value)}</dd>""")) + "</dl>"))
             .RequireAuthorization();
         _app.MapGet("/token", async (HttpContext context) => Fingerprint(await context.GetThunderIDAccessTokenAsync()) ?? "none");
+        // Exchanges the session's access token for the resource, reporting only what's safe to print.
+        _app.MapGet("/exchange", async (HttpContext context, string resource) =>
+        {
+            try
+            {
+                var result = await context.ExchangeThunderIDTokenAsync(new ThunderIDTokenExchangeRequest { Resource = resource });
+                var claims = ThunderIDJwt.DecodeUnverified(result.AccessToken);
+                return Results.Json(new { token = Fingerprint(result.AccessToken), type = result.IssuedTokenType, aud = claims["aud"].ToString(), sub = claims["sub"].GetString() });
+            }
+            catch (ThunderIDException ex)
+            {
+                return Results.Json(new { code = ex.Code, status = (ex as ThunderIDApiException)?.StatusCode, message = ex.Message });
+            }
+        });
         _app.MapPost("/signout", async (HttpContext context) =>
         {
             LastSignOut = await context.SignOutOfThunderIDAsync("/");

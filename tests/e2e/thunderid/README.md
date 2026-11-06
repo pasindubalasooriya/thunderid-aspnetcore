@@ -10,7 +10,7 @@ A throwaway ThunderID at `https://localhost:8091`, built from a pinned ThunderID
 |---|---|
 | `compose.yaml` | Runs ThunderID's `setup.sh` (which imports the bootstrap resources), then `start.sh`, with fresh volumes |
 | `deployment.yaml` | The image's own `deployment.yaml` with `public_url` and the passkey origin moved to port 8091, and back-channel delivery to private addresses allowed, since the test app is reached through `host.docker.internal` |
-| `bootstrap/10-e2e.yaml` | The e2e sign-in flow (with SSO check and session, so tokens carry `sid`), a registration flow for sign-up, the `e2e-webapp` client and the `e2e-user` user |
+| `bootstrap/10-e2e.yaml` | The e2e sign-in flow (with SSO check and session, so tokens carry `sid`), a registration flow for sign-up, the `e2e-webapp` client (authorization code, refresh and token exchange grants), the `e2e-user` user, and the `https://billing.e2e.example` resource server that token exchange targets |
 
 The app registration expects the test app on `https://localhost:7201`, and delivers back-channel logout to `http://host.docker.internal:5201/backchannel-logout`.
 
