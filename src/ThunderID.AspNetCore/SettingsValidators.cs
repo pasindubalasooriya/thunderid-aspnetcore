@@ -85,11 +85,7 @@ internal sealed class OpenIdConnectRequiredSettings(IOptionsMonitor<TokenRefresh
             failures.Add("ClientId is required.");
         }
 
-        if (refresh.CurrentValue.RefreshBeforeExpiry < TimeSpan.Zero)
-        {
-            failures.Add("RefreshBeforeExpiry can't be negative.");
-        }
-
+        SettingsChecks.RefreshBeforeExpiry(failures, refresh.CurrentValue.RefreshBeforeExpiry);
         SettingsChecks.ThrowIfAny(failures);
     }
 }
@@ -135,6 +131,14 @@ internal static class SettingsChecks
         else if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
         {
             failures.Add($"{setting} must be an absolute https URL.");
+        }
+    }
+
+    public static void RefreshBeforeExpiry(List<string> failures, TimeSpan value)
+    {
+        if (value < TimeSpan.Zero)
+        {
+            failures.Add("RefreshBeforeExpiry can't be negative.");
         }
     }
 

@@ -3,9 +3,11 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ThunderID.AspNetCore.BackchannelLogout;
 
@@ -21,7 +23,40 @@ public static class ThunderIDAuthenticationExtensions
     {
         var settings = new ThunderIDOptions();
         configure(settings);
+        return AddThunderID(services, () => settings);
+    }
 
+    /// <summary>
+    /// Signs users in with ThunderID, with settings read from a configuration section such as
+    /// <c>builder.Configuration.GetSection("ThunderID")</c>. When the configuration reloads,
+    /// <see cref="ThunderIDOptions.ClientSecret"/>, <see cref="ThunderIDOptions.Scopes"/>,
+    /// <see cref="ThunderIDOptions.Resource"/> and <see cref="ThunderIDOptions.RefreshBeforeExpiry"/>
+    /// apply from the next request, without a restart. A reload that changes
+    /// <see cref="ThunderIDOptions.Authority"/> or <see cref="ThunderIDOptions.ClientId"/>, or has an
+    /// invalid value, isn't applied at all: the previous settings stay, and a warning with
+    /// <see cref="ThunderIDErrorCodes.ReloadImmutableSetting"/> or <see cref="ThunderIDErrorCodes.InvalidSettings"/>
+    /// is logged.
+    /// </summary>
+    public static AuthenticationBuilder AddThunderID(this IServiceCollection services, IConfiguration configuration)
+    {
+        var initial = ReloadableSettings.Bind(configuration, out var failure);
+        if (failure is not null)
+        {
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.InvalidSettings, SettingsChecks.Prefix + failure);
+        }
+
+        var settings = new ReloadableSettings(configuration, initial);
+        services.TryAddSingleton(sp => new SettingsReloadWatcher(settings, sp.GetRequiredService<ILogger<SettingsReloadWatcher>>()));
+        services.AddSingleton<IOptionsChangeTokenSource<OpenIdConnectOptions>>(sp =>
+            new SettingsChangeTokenSource<OpenIdConnectOptions>(sp.GetRequiredService<SettingsReloadWatcher>(), OpenIdConnectDefaults.AuthenticationScheme));
+        services.AddSingleton<IOptionsChangeTokenSource<TokenRefreshSettings>>(sp =>
+            new SettingsChangeTokenSource<TokenRefreshSettings>(sp.GetRequiredService<SettingsReloadWatcher>(), Options.DefaultName));
+        return AddThunderID(services, () => settings.Current);
+    }
+
+    // The settings are read each time the options are built, so a reload applies once the cache is cleared.
+    private static AuthenticationBuilder AddThunderID(IServiceCollection services, Func<ThunderIDOptions> current)
+    {
         services.TryAddSingleton<ThunderIDRegistration>();
         // Before AddOpenIdConnect, so these run ahead of the handler's own post-configure: that one
         // would otherwise fail first on a missing or http Authority with a framework error, and it
@@ -41,7 +76,7 @@ public static class ThunderIDAuthenticationExtensions
             return new LogoutTokenValidator(oidc.ConfigurationManager!, oidc.ClientId!);
         });
 
-        services.Configure<TokenRefreshSettings>(refresh => refresh.RefreshBeforeExpiry = settings.RefreshBeforeExpiry);
+        services.Configure<TokenRefreshSettings>(refresh => refresh.RefreshBeforeExpiry = current().RefreshBeforeExpiry);
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<TokenRefresher>();
 
@@ -54,6 +89,7 @@ public static class ThunderIDAuthenticationExtensions
             .AddCookie(options => options.Events.OnValidatePrincipal = ValidateSessionAsync)
             .AddOpenIdConnect(options =>
             {
+                var settings = current();
                 options.Authority = settings.Authority;
                 options.ClientId = settings.ClientId;
                 options.ClientSecret = settings.ClientSecret;
