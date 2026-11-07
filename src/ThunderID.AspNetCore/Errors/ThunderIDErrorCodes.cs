@@ -4,7 +4,8 @@ namespace ThunderID.AspNetCore;
 /// Every code ThunderID.AspNetCore raises. Where ThunderID's JavaScript SDKs have a code for the same
 /// condition, it is reused unchanged (the <c>JS-</c> and <c>NODE-</c> codes); the rest start with
 /// <c>ASPNETCORE-</c>. The kind before the number: <c>IV</c> invalid, <c>NF</c> not found, <c>HE</c> ThunderID
-/// answered with an error, <c>NE</c> network failure.
+/// answered with an error, <c>NE</c> network failure, and <c>NR</c> a request that failed, kept from a reused
+/// JavaScript code.
 /// </summary>
 public static class ThunderIDErrorCodes
 {
@@ -60,6 +61,62 @@ public static class ThunderIDErrorCodes
 
     /// <summary>ThunderID's discovery document has no <c>revocation_endpoint</c>.</summary>
     public const string RevocationEndpointMissing = "ASPNETCORE-SIGN_OUT-REV-NF01";
+
+    // Token refresh
+
+    /// <summary>ThunderID's token endpoint refused the refresh token (a 4xx answer), so the local session ends.</summary>
+    public const string RefreshRejected = "JS-AUTH_CORE-RAT2-HE04";
+
+    /// <summary>ThunderID's token endpoint answered the refresh with a server error (5xx). The session is kept.</summary>
+    public const string RefreshServerError = "ASPNETCORE-REFRESH-RAT-HE01";
+
+    /// <summary>ThunderID's token endpoint answered the refresh with something that isn't a token response. The session is kept.</summary>
+    public const string RefreshResponseInvalid = "ASPNETCORE-REFRESH-RAT-IV01";
+
+    /// <summary>ThunderID's token endpoint couldn't be reached to refresh the tokens. The session is kept.</summary>
+    public const string RefreshUnreachable = "JS-AUTH_CORE-RAT2-NR03";
+
+    /// <summary>ThunderID's token endpoint didn't answer the refresh in time. The session is kept.</summary>
+    public const string RefreshTimedOut = "ASPNETCORE-REFRESH-RAT-NE01";
+
+    /// <summary>ThunderID's discovery document has no <c>token_endpoint</c> to refresh with.</summary>
+    public const string RefreshEndpointMissing = "JS-AUTH_CORE-RAT2-NF02";
+
+    // Token exchange
+
+    /// <summary>The token exchange request is invalid, so it wasn't sent. The message names the field.</summary>
+    public const string TokenExchangeInvalid = "ASPNETCORE-TOKEN_EXCHANGE-EXC-IV01";
+
+    /// <summary>No subject token was given and there's no signed-in session to take one from.</summary>
+    public const string TokenExchangeNoSubject = "ASPNETCORE-TOKEN_EXCHANGE-EXC-NF01";
+
+    /// <summary>ThunderID's discovery document has no <c>token_endpoint</c> to exchange at.</summary>
+    public const string TokenExchangeEndpointMissing = "JS-AUTH_CORE-RCG-NF01";
+
+    /// <summary>ThunderID's token endpoint refused the exchange.</summary>
+    public const string TokenExchangeRejected = "JS-AUTH_CORE-RCG-HE03";
+
+    /// <summary>ThunderID's token endpoint couldn't be reached for the exchange.</summary>
+    public const string TokenExchangeUnreachable = "JS-AUTH_CORE-RCG-NE02";
+
+    /// <summary>ThunderID's token endpoint didn't answer the exchange in time.</summary>
+    public const string TokenExchangeTimedOut = "ASPNETCORE-TOKEN_EXCHANGE-EXC-NE01";
+
+    /// <summary>ThunderID's token endpoint answered the exchange without an access token.</summary>
+    public const string TokenExchangeResponseInvalid = "ASPNETCORE-TOKEN_EXCHANGE-EXC-IV02";
+
+    // Decoding
+
+    /// <summary>The value given to <c>ThunderIDJwt.DecodeUnverified</c> isn't a JWT with a JSON payload.</summary>
+    public const string JwtMalformed = "JS-CRYPTO_UTIL-DIT-IV02";
+
+    // Settings reload
+
+    /// <summary>
+    /// Reloaded settings change <c>ClientId</c> or <c>Authority</c>, which can't change while the app runs.
+    /// The whole change is ignored and the previous settings stay.
+    /// </summary>
+    public const string ReloadImmutableSetting = "ASPNETCORE-CONFIG-RLD-IV01";
 
     // Back-channel logout request
 

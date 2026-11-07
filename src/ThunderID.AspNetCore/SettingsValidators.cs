@@ -69,7 +69,7 @@ internal sealed class JwtBearerSettingsValidator : IValidateOptions<JwtBearerOpt
 
 // The settings every ThunderID app needs, checked after all of the app's configuration and before
 // ASP.NET Core's own post-configure. A failure is a ThunderID error, raised when the app starts.
-internal sealed class OpenIdConnectRequiredSettings : IPostConfigureOptions<OpenIdConnectOptions>
+internal sealed class OpenIdConnectRequiredSettings(IOptionsMonitor<TokenRefreshSettings> refresh) : IPostConfigureOptions<OpenIdConnectOptions>
 {
     public void PostConfigure(string? name, OpenIdConnectOptions options)
     {
@@ -85,6 +85,7 @@ internal sealed class OpenIdConnectRequiredSettings : IPostConfigureOptions<Open
             failures.Add("ClientId is required.");
         }
 
+        SettingsChecks.RefreshBeforeExpiry(failures, refresh.CurrentValue.RefreshBeforeExpiry);
         SettingsChecks.ThrowIfAny(failures);
     }
 }
@@ -130,6 +131,14 @@ internal static class SettingsChecks
         else if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
         {
             failures.Add($"{setting} must be an absolute https URL.");
+        }
+    }
+
+    public static void RefreshBeforeExpiry(List<string> failures, TimeSpan value)
+    {
+        if (value < TimeSpan.Zero)
+        {
+            failures.Add("RefreshBeforeExpiry can't be negative.");
         }
     }
 

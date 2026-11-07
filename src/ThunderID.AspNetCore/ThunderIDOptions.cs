@@ -18,6 +18,13 @@ public sealed class ThunderIDOptions
     /// grants permission scopes defined on that resource server.
     /// </summary>
     public string? Resource { get; set; }
+
+    /// <summary>
+    /// How long before the access token expires the session's tokens are refreshed, on the next request
+    /// with the session. Default 60 seconds. Refresh needs a refresh token, which ThunderID issues when
+    /// the application's grant types include <c>refresh_token</c>.
+    /// </summary>
+    public TimeSpan RefreshBeforeExpiry { get; set; } = TokenRefreshSettings.DefaultRefreshBeforeExpiry;
 }
 
 /// <summary>Settings for an API that accepts ThunderID access tokens.</summary>

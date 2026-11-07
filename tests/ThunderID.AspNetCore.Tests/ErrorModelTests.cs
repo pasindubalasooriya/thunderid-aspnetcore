@@ -58,13 +58,14 @@ public sealed class ErrorModelTests
     {
         Assert.NotEmpty(Codes);
         Assert.Equal(Codes.Count, Codes.Values.Distinct(StringComparer.Ordinal).Count());
-        Assert.All(Codes.Values, code => Assert.Matches(new Regex("^[A-Z]+-[A-Z_]+-[A-Z0-9]+-(IV|NF|HE|NE)[0-9]{2}$"), code));
+        Assert.All(Codes.Values, code => Assert.Matches(new Regex("^[A-Z]+-[A-Z_]+-[A-Z0-9]+-(IV|NF|HE|NE|NR)[0-9]{2}$"), code));
     }
 
     [Fact]
     public void Only_codes_shared_with_the_javascript_sdks_lack_the_aspnetcore_prefix()
     {
-        // Each reused code names the same condition in @thunderid/javascript or @thunderid/node (javascript-sdks f9be4b0).
+        // Each reused code names the same condition in @thunderid/javascript or @thunderid/node (javascript-sdks f9be4b0;
+        // the refresh, custom grant and decode codes checked again at 2c42300).
         var reused = new Dictionary<string, string>
         {
             [nameof(ThunderIDErrorCodes.LogoutTokenReplayed)] = "NODE-AUTH_CLIENT-HBL-IV01",
@@ -80,6 +81,13 @@ public sealed class ErrorModelTests
             [nameof(ThunderIDErrorCodes.LogoutTokenNoSessionOrSubject)] = "JS-LOGOUT_TOKEN-VLTC-IV11",
             [nameof(ThunderIDErrorCodes.LogoutTokenJwtIdMissing)] = "JS-LOGOUT_TOKEN-VLTC-IV12",
             [nameof(ThunderIDErrorCodes.LogoutTokenSignature)] = "JS-CRYPTO_HELPER-VLTS-IV01",
+            [nameof(ThunderIDErrorCodes.RefreshRejected)] = "JS-AUTH_CORE-RAT2-HE04",
+            [nameof(ThunderIDErrorCodes.RefreshUnreachable)] = "JS-AUTH_CORE-RAT2-NR03",
+            [nameof(ThunderIDErrorCodes.RefreshEndpointMissing)] = "JS-AUTH_CORE-RAT2-NF02",
+            [nameof(ThunderIDErrorCodes.TokenExchangeEndpointMissing)] = "JS-AUTH_CORE-RCG-NF01",
+            [nameof(ThunderIDErrorCodes.TokenExchangeRejected)] = "JS-AUTH_CORE-RCG-HE03",
+            [nameof(ThunderIDErrorCodes.TokenExchangeUnreachable)] = "JS-AUTH_CORE-RCG-NE02",
+            [nameof(ThunderIDErrorCodes.JwtMalformed)] = "JS-CRYPTO_UTIL-DIT-IV02",
         };
 
         Assert.Equal(reused, Codes.Where(c => !c.Value.StartsWith("ASPNETCORE-", StringComparison.Ordinal)).ToDictionary());

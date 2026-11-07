@@ -1,8 +1,8 @@
 # ThunderID.AspNetCore
 
 Sign users in to ASP.NET Core apps with [ThunderID](https://github.com/thunder-id/thunderid), the
-open-source IAM stack, protect APIs with ThunderID access tokens, and end sessions when ThunderID
-sends an OIDC back-channel logout.
+open-source IAM stack, keep their tokens fresh, protect APIs with ThunderID access tokens, and end
+sessions when ThunderID sends an OIDC back-channel logout.
 
 Requires .NET 10.
 
@@ -32,13 +32,16 @@ builder.Services.AddAuthorizationBuilder()
 
 | API | What it does |
 |---|---|
-| `AddThunderID` | Cookie and OpenID Connect sign-in with the settings ThunderID needs, checked when the app starts |
+| `AddThunderID` | Cookie and OpenID Connect sign-in with the settings ThunderID needs, checked when the app starts. Refreshes tokens ahead of expiry. Given a configuration section, applies reloaded settings without a restart |
+| `GetThunderIDAccessTokenAsync` | The signed-in user's access token, refreshed first if it was close to expiry |
+| `ExchangeThunderIDTokenAsync` | RFC 8693 token exchange for a token meant for another resource server |
+| `ThunderIDJwt.DecodeUnverified` | Reads a JWT's claims without verifying them; never use it to authorize |
 | `MapThunderIDBackchannelLogout` | Receives ThunderID's logout token and refuses that session's cookie from the next request |
 | `AddThunderIDApi` | JWT bearer for APIs, keeping claim names as they appear in the token |
 | `AddScopePolicy` | Authorization policy for ThunderID's space-delimited `scope` claim |
 | `ILogoutSessionStore` | Where ended sessions are kept; in memory by default, replace it for more than one instance |
 
-Implements the ThunderID SDK specification v0.8. Versions are `0.x` for now, so a minor version
+Implements the ThunderID SDK specification v0.9. Versions are `0.x` for now, so a minor version
 can change the API.
 
 Quickstart, configuration, production notes and limits:

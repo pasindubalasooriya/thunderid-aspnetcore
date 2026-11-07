@@ -1,9 +1,8 @@
 using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using ThunderID.AspNetCore;
 
 namespace WebApp.Pages;
 
@@ -20,16 +19,20 @@ public class CallApiModel(IHttpClientFactory httpClientFactory, IConfiguration c
 
     public async Task OnGetAsync()
     {
-        var accessToken = await HttpContext.GetTokenAsync("access_token");
+        var accessToken = await HttpContext.GetThunderIDAccessTokenAsync();
         if (accessToken is null)
         {
             return;
         }
 
-        var parts = accessToken.Split('.');
-        if (parts.Length == 3)
+        // Shown for learning only: decoding doesn't verify the token, so never authorize on it.
+        try
         {
-            AccessTokenPayload = Pretty(parts[1]);
+            AccessTokenPayload = JsonSerializer.Serialize(ThunderIDJwt.DecodeUnverified(accessToken), new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (ThunderIDException)
+        {
+            // An opaque access token has no payload to show.
         }
 
         var client = httpClientFactory.CreateClient();
@@ -50,13 +53,5 @@ public class CallApiModel(IHttpClientFactory httpClientFactory, IConfiguration c
         MeResponseBody = meResponse.IsSuccessStatusCode
             ? JsonSerializer.Serialize(JsonDocument.Parse(meBody), new JsonSerializerOptions { WriteIndented = true })
             : meBody;
-    }
-
-    private static string Pretty(string base64Url)
-    {
-        var base64 = base64Url.Replace('-', '+').Replace('_', '/');
-        base64 = base64.PadRight(base64.Length + (4 - base64.Length % 4) % 4, '=');
-        var json = Encoding.UTF8.GetString(Convert.FromBase64String(base64));
-        return JsonSerializer.Serialize(JsonDocument.Parse(json), new JsonSerializerOptions { WriteIndented = true });
     }
 }

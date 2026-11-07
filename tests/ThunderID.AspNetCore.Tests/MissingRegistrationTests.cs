@@ -64,4 +64,60 @@ public sealed class MissingRegistrationTests
         Assert.Equal(ThunderIDErrorCodes.NotRegistered, caught.Code);
         Assert.StartsWith("SignOutOfThunderIDAsync needs AddThunderID.", caught.Message);
     }
+
+    [Fact]
+    public async Task Access_token_without_AddThunderID_fails_with_a_ThunderID_error()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie();
+        await using var app = builder.Build();
+        ThunderIDRuntimeException? caught = null;
+        app.MapGet("/token", async (HttpContext context) =>
+        {
+            try
+            {
+                await context.GetThunderIDAccessTokenAsync();
+            }
+            catch (ThunderIDRuntimeException ex)
+            {
+                caught = ex;
+            }
+        });
+        await app.StartAsync();
+
+        await app.GetTestClient().GetAsync("/token");
+
+        Assert.NotNull(caught);
+        Assert.Equal(ThunderIDErrorCodes.NotRegistered, caught.Code);
+        Assert.StartsWith("GetThunderIDAccessTokenAsync needs AddThunderID.", caught.Message);
+    }
+
+    [Fact]
+    public async Task Token_exchange_without_AddThunderID_fails_with_a_ThunderID_error()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie();
+        await using var app = builder.Build();
+        ThunderIDRuntimeException? caught = null;
+        app.MapPost("/exchange", async (HttpContext context) =>
+        {
+            try
+            {
+                await context.ExchangeThunderIDTokenAsync(new ThunderIDTokenExchangeRequest { SubjectToken = "t" });
+            }
+            catch (ThunderIDRuntimeException ex)
+            {
+                caught = ex;
+            }
+        });
+        await app.StartAsync();
+
+        await app.GetTestClient().PostAsync("/exchange", null);
+
+        Assert.NotNull(caught);
+        Assert.Equal(ThunderIDErrorCodes.NotRegistered, caught.Code);
+        Assert.StartsWith("ExchangeThunderIDTokenAsync needs AddThunderID.", caught.Message);
+    }
 }

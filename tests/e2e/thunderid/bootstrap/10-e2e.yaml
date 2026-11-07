@@ -370,6 +370,7 @@ inboundAuthConfig:
       grantTypes:
         - authorization_code
         - refresh_token
+        - urn:ietf:params:oauth:grant-type:token-exchange
       responseTypes:
         - code
       pkceRequired: true
@@ -412,3 +413,19 @@ attributes:
   family_name: User
 credentials:
   password: e2e-test-only-User1
+---
+# The resource server the token exchange test asks for. Exchanging for it makes its identifier the
+# new token's audience.
+resource_type: resource_server
+id: e2e-billing-rs
+name: E2E Billing
+description: A resource server the end-to-end tests exchange tokens for.
+identifier: https://billing.e2e.example
+ouHandle: default
+delimiter: ":"
+resources:
+  - name: Invoice
+    handle: invoice
+    actions:
+      - name: Read
+        handle: read
