@@ -30,6 +30,7 @@ public class DiscoveryIssuerTests
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => app.GetTestClient().GetAsync("/protected"));
 
         Assert.Contains("doesn't match the configured Authority", Messages(ex));
+        AssertIssuerMismatch(ex);
     }
 
     [Fact]
@@ -52,6 +53,8 @@ public class DiscoveryIssuerTests
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Contains("discovery document was rejected", await response.Content.ReadAsStringAsync());
+        var result = await app.Services.GetRequiredService<LogoutTokenValidator>().ValidateAsync(FreshLogoutToken(Attacker));
+        Assert.Equal(ThunderIDErrorCodes.DiscoveryIssuerMismatch, result.Error!.Code);
     }
 
     [Fact]
@@ -74,6 +77,7 @@ public class DiscoveryIssuerTests
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => CallApiAsync(app, AccessToken(Attacker)));
 
         Assert.Contains("doesn't match the configured Authority", Messages(ex));
+        AssertIssuerMismatch(ex);
     }
 
     [Fact]
@@ -94,6 +98,7 @@ public class DiscoveryIssuerTests
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => app.GetTestClient().GetAsync("/protected"));
 
         Assert.Contains("doesn't match the configured Authority", Messages(ex));
+        AssertIssuerMismatch(ex);
     }
 
     private static async Task<WebApplication> WebAppAsync(string discoveryIssuer)
@@ -174,6 +179,19 @@ public class DiscoveryIssuerTests
     }
 
     private static FormUrlEncodedContent Form(string logoutToken) => new([new("logout_token", logoutToken)]);
+
+    // The framework may wrap it; the ThunderID error is in the chain.
+    private static void AssertIssuerMismatch(Exception ex)
+    {
+        var chain = new List<Exception>();
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            chain.Add(e);
+        }
+
+        var error = Assert.Single(chain.OfType<ThunderIDRuntimeException>());
+        Assert.Equal(ThunderIDErrorCodes.DiscoveryIssuerMismatch, error.Code);
+    }
 
     private static string Messages(Exception ex)
     {

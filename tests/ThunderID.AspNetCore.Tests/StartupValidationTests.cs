@@ -36,7 +36,8 @@ public class StartupValidationTests
         var outbound = new CountingHandler();
         await using var app = WebApp(authority, clientId, outbound);
 
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => app.StartAsync());
+        var ex = await Assert.ThrowsAsync<ThunderIDRuntimeException>(() => app.StartAsync());
+        Assert.Equal(ThunderIDErrorCodes.InvalidSettings, ex.Code);
 
         Assert.Contains(setting, ex.Message);
         Assert.Empty(outbound.Requests);
@@ -48,9 +49,10 @@ public class StartupValidationTests
         await using var app = WebApp("http://localhost:8090", LogoutTokens.ClientId, new CountingHandler(), services =>
             services.Configure<OpenIdConnectOptions>(Oidc, options => options.RequireHttpsMetadata = false));
 
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => app.StartAsync());
+        var ex = await Assert.ThrowsAsync<ThunderIDRuntimeException>(() => app.StartAsync());
+        Assert.Equal(ThunderIDErrorCodes.InvalidSettings, ex.Code);
 
-        Assert.Contains("ThunderID: Authority must be an absolute https URL.", ex.Message);
+        Assert.Equal("The ThunderID settings are invalid: Authority must be an absolute https URL.", ex.Message);
     }
 
     [Theory]
@@ -79,10 +81,31 @@ public class StartupValidationTests
                 }
             }));
 
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => app.StartAsync());
+        var ex = await Assert.ThrowsAsync<ThunderIDRuntimeException>(() => app.StartAsync());
+        Assert.Equal(ThunderIDErrorCodes.InvalidSettings, ex.Code);
 
-        Assert.Contains("ThunderID: ", ex.Message);
         Assert.Contains(setting, ex.Message);
+        Assert.IsType<Microsoft.Extensions.Options.OptionsValidationException>(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task Every_failed_setting_is_listed_without_its_value()
+    {
+        await using var app = WebApp("http://idp.example.com/secret-path", "", new CountingHandler());
+
+        var ex = await Assert.ThrowsAsync<ThunderIDRuntimeException>(() => app.StartAsync());
+
+        Assert.Equal("The ThunderID settings are invalid: Authority must be an absolute https URL. ClientId is required.", ex.Message);
+        Assert.Null(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task Invalid_settings_do_not_fail_a_host_that_is_built_but_not_started()
+    {
+        // Design-time tools such as dotnet ef build the host without starting it.
+        await using var app = WebApp("", "", new CountingHandler());
+
+        Assert.NotNull(app.Services);
     }
 
     [Fact]
@@ -105,7 +128,8 @@ public class StartupValidationTests
         var outbound = new CountingHandler();
         await using var app = Api(authority, audience, outbound);
 
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => app.StartAsync());
+        var ex = await Assert.ThrowsAsync<ThunderIDRuntimeException>(() => app.StartAsync());
+        Assert.Equal(ThunderIDErrorCodes.InvalidSettings, ex.Code);
 
         Assert.Contains(setting, ex.Message);
         Assert.Empty(outbound.Requests);
@@ -131,10 +155,11 @@ public class StartupValidationTests
                 }
             }));
 
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => app.StartAsync());
+        var ex = await Assert.ThrowsAsync<ThunderIDRuntimeException>(() => app.StartAsync());
+        Assert.Equal(ThunderIDErrorCodes.InvalidSettings, ex.Code);
 
-        Assert.Contains("ThunderID: ", ex.Message);
         Assert.Contains(setting, ex.Message);
+        Assert.IsType<Microsoft.Extensions.Options.OptionsValidationException>(ex.InnerException);
     }
 
     private static WebApplication WebApp(string authority, string clientId, CountingHandler outbound, Action<IServiceCollection>? extra = null)

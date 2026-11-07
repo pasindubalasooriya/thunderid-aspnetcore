@@ -13,7 +13,7 @@ public class LogoutTokenValidatorTests
         TimeSpan.FromMinutes(2),
         time ?? new ManualTimeProvider(LogoutTokens.Now));
 
-    private static async Task<string?> Rejection(string token, TimeProvider? time = null)
+    private static async Task<ThunderIDException?> Rejection(string token, TimeProvider? time = null)
     {
         var result = await Validator(time).ValidateAsync(token);
         Assert.False(result.IsValid);
@@ -21,12 +21,30 @@ public class LogoutTokenValidatorTests
         return result.Error;
     }
 
+    private static void AssertRejected(string code, string reason, ThunderIDException? error)
+    {
+        Assert.NotNull(error);
+        Assert.Equal((code, reason), (error.Code, error.Message));
+        Assert.IsType<ThunderIDRuntimeException>(error);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void Client_id_is_required(string? clientId)
+    {
+        var ex = Assert.Throws<ThunderIDRuntimeException>(() => new LogoutTokenValidator(
+            new StaticConfigurationManager<OpenIdConnectConfiguration>(LogoutTokens.Configuration()), clientId!));
+
+        Assert.Equal(ThunderIDErrorCodes.ValidatorHasNoClientId, ex.Code);
+    }
+
     [Fact]
     public async Task Token_shaped_like_thunderids_is_accepted()
     {
         var result = await Validator().ValidateAsync(LogoutTokens.Create());
 
-        Assert.True(result.IsValid, result.Error);
+        Assert.True(result.IsValid, result.Error?.Message);
         var token = result.Token!;
         Assert.Equal(LogoutTokens.Issuer, token.Issuer);
         Assert.Equal("01a18372-2364-7a2a-afe3-c0626b927850", token.SessionId);
@@ -49,7 +67,7 @@ public class LogoutTokenValidatorTests
     {
         var result = await Validator().ValidateAsync(LogoutTokens.Create((_, p) => p.Remove("sid")));
 
-        Assert.True(result.IsValid, result.Error);
+        Assert.True(result.IsValid, result.Error?.Message);
         Assert.Null(result.Token!.SessionId);
     }
 
@@ -58,7 +76,7 @@ public class LogoutTokenValidatorTests
     {
         var result = await Validator().ValidateAsync(LogoutTokens.Create((_, p) => p.Remove("sub")));
 
-        Assert.True(result.IsValid, result.Error);
+        Assert.True(result.IsValid, result.Error?.Message);
         Assert.Null(result.Token!.Subject);
     }
 
@@ -66,11 +84,11 @@ public class LogoutTokenValidatorTests
 
     [Fact]
     public async Task Id_token_typ_is_rejected() =>
-        Assert.Equal("typ is not logout+jwt", await Rejection(LogoutTokens.Create((h, _) => h["typ"] = "JWT")));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenType, "typ is not logout+jwt", await Rejection(LogoutTokens.Create((h, _) => h["typ"] = "JWT")));
 
     [Fact]
     public async Task Missing_typ_is_rejected() =>
-        Assert.Equal("typ is not logout+jwt", await Rejection(LogoutTokens.Create((h, _) => h.Remove("typ"))));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenType, "typ is not logout+jwt", await Rejection(LogoutTokens.Create((h, _) => h.Remove("typ"))));
 
     [Fact]
     public async Task Media_type_form_of_typ_is_accepted() =>
@@ -80,7 +98,7 @@ public class LogoutTokenValidatorTests
 
     [Fact]
     public async Task Signature_from_another_key_with_the_same_kid_is_rejected() =>
-        Assert.Equal("signature is invalid", await Rejection(LogoutTokens.Create(key: LogoutTokens.OtherKey)));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenSignature, "signature is invalid", await Rejection(LogoutTokens.Create(key: LogoutTokens.OtherKey)));
 
     [Fact]
     public async Task Tampered_payload_is_rejected()
@@ -88,12 +106,12 @@ public class LogoutTokenValidatorTests
         var parts = LogoutTokens.Create().Split('.');
         var forged = LogoutTokens.Create((_, p) => p["sub"] = "someone-else").Split('.')[1];
 
-        Assert.Equal("signature is invalid", await Rejection($"{parts[0]}.{forged}.{parts[2]}"));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenSignature, "signature is invalid", await Rejection($"{parts[0]}.{forged}.{parts[2]}"));
     }
 
     [Fact]
     public async Task Unknown_kid_is_rejected() =>
-        Assert.Equal("signing key is unknown", await Rejection(LogoutTokens.Create((h, _) => h["kid"] = "rotated-away")));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenSigningKeyUnknown, "signing key is unknown", await Rejection(LogoutTokens.Create((h, _) => h["kid"] = "rotated-away")));
 
     [Fact]
     public async Task Unsigned_alg_none_token_is_rejected()
@@ -101,7 +119,7 @@ public class LogoutTokenValidatorTests
         var (header, payload) = LogoutTokens.Shape();
         header["alg"] = "none";
 
-        Assert.NotNull(await Rejection(LogoutTokens.Unsigned(header, payload)));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenAlgorithm, "signing algorithm is not accepted", await Rejection(LogoutTokens.Unsigned(header, payload)));
     }
 
     [Fact]
@@ -110,24 +128,24 @@ public class LogoutTokenValidatorTests
         var (header, payload) = LogoutTokens.Shape();
         header["alg"] = "RS512";
 
-        Assert.NotNull(await Rejection(LogoutTokens.Sign(header, payload, LogoutTokens.SigningKey)));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenAlgorithm, "signing algorithm is not accepted", await Rejection(LogoutTokens.Sign(header, payload, LogoutTokens.SigningKey)));
     }
 
     // 3. issuer
 
     [Fact]
     public async Task Wrong_issuer_is_rejected() =>
-        Assert.Equal("issuer does not match", await Rejection(LogoutTokens.Create((_, p) => p["iss"] = "https://evil.example")));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenIssuer, "issuer does not match", await Rejection(LogoutTokens.Create((_, p) => p["iss"] = "https://evil.example")));
 
     [Fact]
     public async Task Issuer_with_trailing_slash_is_rejected() =>
-        Assert.Equal("issuer does not match", await Rejection(LogoutTokens.Create((_, p) => p["iss"] = LogoutTokens.Issuer + "/")));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenIssuer, "issuer does not match", await Rejection(LogoutTokens.Create((_, p) => p["iss"] = LogoutTokens.Issuer + "/")));
 
     // 4. audience
 
     [Fact]
     public async Task Token_for_another_client_is_rejected() =>
-        Assert.Equal("audience does not contain the client id", await Rejection(LogoutTokens.Create((_, p) => p["aud"] = "another-app")));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenAudience, "audience does not contain the client id", await Rejection(LogoutTokens.Create((_, p) => p["aud"] = "another-app")));
 
     // 5. lifetime
 
@@ -136,7 +154,7 @@ public class LogoutTokenValidatorTests
     {
         var later = new ManualTimeProvider(LogoutTokens.Now.AddSeconds(120) + TimeSpan.FromMinutes(2) + TimeSpan.FromSeconds(1));
 
-        Assert.Equal("token is outside its lifetime", await Rejection(LogoutTokens.Create(), later));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenExpired, "token has expired", await Rejection(LogoutTokens.Create(), later));
     }
 
     [Fact]
@@ -148,12 +166,17 @@ public class LogoutTokenValidatorTests
     }
 
     [Fact]
+    public async Task Token_not_valid_yet_is_rejected() =>
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenNotYetValid, "token is not valid yet", await Rejection(LogoutTokens.Create((_, p) =>
+            p["nbf"] = LogoutTokens.IssuedAt + 600)));
+
+    [Fact]
     public async Task Missing_exp_is_rejected() =>
-        Assert.Equal("token is outside its lifetime", await Rejection(LogoutTokens.Create((_, p) => p.Remove("exp"))));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenExpired, "exp is missing", await Rejection(LogoutTokens.Create((_, p) => p.Remove("exp"))));
 
     [Fact]
     public async Task Iat_in_the_future_is_rejected() =>
-        Assert.Equal("iat is in the future", await Rejection(LogoutTokens.Create((_, p) =>
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenIssuedAt, "iat is in the future", await Rejection(LogoutTokens.Create((_, p) =>
         {
             p["iat"] = LogoutTokens.IssuedAt + 600;
             p["nbf"] = LogoutTokens.IssuedAt;
@@ -162,29 +185,29 @@ public class LogoutTokenValidatorTests
 
     [Fact]
     public async Task Missing_iat_is_rejected() =>
-        Assert.Equal("iat is missing", await Rejection(LogoutTokens.Create((_, p) => p.Remove("iat"))));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenIssuedAt, "iat is missing", await Rejection(LogoutTokens.Create((_, p) => p.Remove("iat"))));
 
     // 6. events
 
     [Fact]
     public async Task Missing_events_is_rejected() =>
-        Assert.Equal("events has no back-channel logout member", await Rejection(LogoutTokens.Create((_, p) => p.Remove("events"))));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenEvent, "events has no back-channel logout member", await Rejection(LogoutTokens.Create((_, p) => p.Remove("events"))));
 
     [Fact]
     public async Task Events_without_the_logout_member_is_rejected() =>
-        Assert.Equal("events has no back-channel logout member", await Rejection(LogoutTokens.Create((_, p) =>
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenEvent, "events has no back-channel logout member", await Rejection(LogoutTokens.Create((_, p) =>
             p["events"] = new JsonObject { ["https://schemas.openid.net/secevent/risc/event-type/account-disabled"] = new JsonObject() })));
 
     [Fact]
     public async Task Logout_member_that_is_not_an_object_is_rejected() =>
-        Assert.Equal("events has no back-channel logout member", await Rejection(LogoutTokens.Create((_, p) =>
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenEvent, "events has no back-channel logout member", await Rejection(LogoutTokens.Create((_, p) =>
             p["events"] = new JsonObject { [LogoutTokenValidator.BackchannelLogoutEvent] = true })));
 
     // 7. nonce
 
     [Fact]
     public async Task Nonce_is_rejected() =>
-        Assert.Equal("nonce must not be present", await Rejection(LogoutTokens.Create((_, p) => p["nonce"] = "abc")));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenNonce, "nonce must not be present", await Rejection(LogoutTokens.Create((_, p) => p["nonce"] = "abc")));
 
     [Fact]
     public async Task Id_token_replayed_as_logout_token_is_rejected()
@@ -198,14 +221,14 @@ public class LogoutTokenValidatorTests
             p["auth_time"] = LogoutTokens.IssuedAt;
         });
 
-        Assert.NotNull(await Rejection(idToken));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenType, "typ is not logout+jwt", await Rejection(idToken));
     }
 
     // 8. sid or sub, and jti
 
     [Fact]
     public async Task Neither_sid_nor_sub_is_rejected() =>
-        Assert.Equal("neither sid nor sub is present", await Rejection(LogoutTokens.Create((_, p) =>
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenNoSessionOrSubject, "neither sid nor sub is present", await Rejection(LogoutTokens.Create((_, p) =>
         {
             p.Remove("sid");
             p.Remove("sub");
@@ -213,7 +236,7 @@ public class LogoutTokenValidatorTests
 
     [Fact]
     public async Task Empty_sid_and_sub_are_rejected() =>
-        Assert.Equal("neither sid nor sub is present", await Rejection(LogoutTokens.Create((_, p) =>
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenNoSessionOrSubject, "neither sid nor sub is present", await Rejection(LogoutTokens.Create((_, p) =>
         {
             p["sid"] = "";
             p["sub"] = "";
@@ -221,7 +244,7 @@ public class LogoutTokenValidatorTests
 
     [Fact]
     public async Task Missing_jti_is_rejected() =>
-        Assert.Equal("jti is missing", await Rejection(LogoutTokens.Create((_, p) => p.Remove("jti"))));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenJwtIdMissing, "jti is missing", await Rejection(LogoutTokens.Create((_, p) => p.Remove("jti"))));
 
     // Input shape
 
@@ -229,15 +252,15 @@ public class LogoutTokenValidatorTests
     [InlineData(null)]
     [InlineData("")]
     public async Task Missing_token_is_rejected(string? token) =>
-        Assert.Equal("logout_token is missing", (await Validator().ValidateAsync(token)).Error);
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenMissing, "logout_token is missing", (await Validator().ValidateAsync(token)).Error);
 
     [Fact]
     public async Task Garbage_is_rejected() =>
-        Assert.Equal("logout_token is not a JWT", await Rejection("not-a-jwt"));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenMalformed, "logout_token is not a JWT", await Rejection("not-a-jwt"));
 
     [Fact]
     public async Task Oversized_token_is_rejected() =>
-        Assert.Equal("logout_token is too large", await Rejection(new string('a', LogoutTokenValidator.MaxTokenLength + 1)));
+        AssertRejected(ThunderIDErrorCodes.LogoutTokenTooLarge, "logout_token is too large", await Rejection(new string('a', LogoutTokenValidator.MaxTokenLength + 1)));
 
     [Fact]
     public async Task Errors_never_contain_the_token()
@@ -245,8 +268,8 @@ public class LogoutTokenValidatorTests
         var token = LogoutTokens.Create((_, p) => p["iss"] = "https://evil.example");
         var error = await Rejection(token);
 
-        Assert.DoesNotContain(token.Split('.')[1], error);
-        Assert.DoesNotContain("01a18372", error);
+        Assert.DoesNotContain(token.Split('.')[1], error!.Message);
+        Assert.DoesNotContain("01a18372", error.Message);
     }
 
     // Bounded JWKS refresh (SDK spec AC9.7)

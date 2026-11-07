@@ -175,15 +175,17 @@ requests.
 
 ## Configuration
 
-`AddThunderID` and `AddThunderIDApi` check their settings when the app starts, so a mistake stops
-the app from starting rather than failing the first sign-in:
+`AddThunderID` and `AddThunderIDApi` check their settings when the app starts, before any call to
+ThunderID, so a mistake stops the app from starting rather than failing the first sign-in. It
+throws a `ThunderIDRuntimeException` with code `ASPNETCORE-CONFIG-VAL-IV01` whose message lists
+every failed setting by name, never its value, for example `The ThunderID settings are invalid:
+Authority must be an absolute https URL. ClientId is required.`
 
 - `Authority` must be an absolute `https` URL, and `ClientId` (web app) or `Audience` (API) must be
   set.
 - The security checks can't be turned off, including through ASP.NET Core's own options (for
   example `PostConfigure`): PKCE, the `code` response type, the nonce, and issuer, audience,
-  lifetime and signature validation. A weakened setting fails startup with a message starting
-  `ThunderID:`.
+  lifetime and signature validation. A weakened setting fails startup with the same error.
 - The discovery document's `issuer` must equal `Authority` exactly, or none of its endpoints or
   keys are used. The comparison is exact, so `https://localhost:8090/` and `https://localhost:8090`
   don't match. Use the value ThunderID's discovery document reports.
@@ -200,7 +202,7 @@ The specification's configuration keys, and what this package does with each:
 | `clientId`, `clientSecret`, `scopes` | `ClientId`, `ClientSecret`, `Scopes` |
 | `backchannelLogout` | `app.MapThunderIDBackchannelLogout(path)`, with the store from `ILogoutSessionStore` |
 | `afterSignInUrl`, `afterSignOutUrl` | ASP.NET Core's `AuthenticationProperties.RedirectUri` on `Challenge` and `SignOut` |
-| `signInOptions` | ASP.NET Core's `OpenIdConnectOptions.AdditionalAuthorizationParameters`. Parameters the SDK sets itself (`client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`) can't be overridden |
+| `signInOptions` | ASP.NET Core's `OpenIdConnectOptions.AdditionalAuthorizationParameters`. Parameters the SDK sets itself (`client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`) are ignored, and a warning at startup names them |
 | `http`, `tokenRequest` | ASP.NET Core's `BackchannelHttpHandler` and `BackchannelTimeout` |
 | `storage` | ASP.NET Core's cookie. Supply an `ITicketStore` through `CookieAuthenticationOptions.SessionStore` to keep sessions on the server |
 | `tokenValidation` | Not configurable: validation is always on |
@@ -227,17 +229,17 @@ The specification's configuration keys, and what this package does with each:
 
 With no session, it revokes nothing and redirects to `redirectUri`, and the result reports no failure.
 
-If revocation fails, `RevocationFailed` is true and `RevocationError` says why. The user is still
-signed out locally, but the token stays valid at ThunderID until it expires, so tell the user or
-log it:
+If revocation fails, `RevocationFailed` is true and `RevocationError` is a `ThunderIDException`
+saying why (see [Errors](#errors)). Sign-out itself never throws for it. The user is still signed
+out locally, but the token stays valid at ThunderID until it expires, so tell the user or log it:
 
 ```csharp
 app.MapPost("/signout", async (HttpContext context, ILogger<Program> logger) =>
 {
     var result = await context.SignOutOfThunderIDAsync("/");
-    if (result.RevocationFailed)
+    if (result.RevocationError is { } error)
     {
-        logger.LogWarning("Signed out locally, but ThunderID didn't revoke the token: {Reason}", result.RevocationError);
+        logger.LogWarning(error, "Signed out locally, but ThunderID didn't revoke the token ({Code})", error.Code);
     }
 });
 ```
@@ -263,6 +265,114 @@ app.MapThunderIDBackchannelLogout("/backchannel-logout", context =>
 It runs after the logout is recorded, and only for a valid token. If it throws, the exception is
 logged and ThunderID still gets `200`, because the session has already ended. It doesn't say how
 many sessions ended: cookie sessions end on their next request, so the count isn't known.
+
+## Errors
+
+Every error this package raises is a `ThunderIDException`, so one `catch` covers them all:
+
+| Type | When | Adds |
+|---|---|---|
+| `ThunderIDException` | The base type | `Code`, which never changes meaning, and `Origin`, always `"ThunderID.AspNetCore"` |
+| `ThunderIDApiException` | ThunderID answered with an HTTP error | `StatusCode` and `StatusText`, for example `400` and `"Bad Request"` |
+| `ThunderIDRuntimeException` | Anything else: invalid settings or arguments, a check that failed, ThunderID unreachable | |
+
+The codes are constants in `ThunderIDErrorCodes`, so you can `switch` on them. Where ThunderID's
+JavaScript SDKs have a code for the same condition, it's the same string here. When the failure
+came from something else, such as a network error or the framework's own exception, that is the
+`InnerException`. Messages never contain a token, an authorization code or a secret.
+
+Where each kind of error reaches your code:
+
+| Operation | How you get the error |
+|---|---|
+| Startup | Thrown when the app starts |
+| `AddScopePolicy`, `LogoutTokenValidator`, `InMemoryLogoutSessionStore` | Thrown by the call, for an invalid argument |
+| `MapThunderIDBackchannelLogout`, `SignOutOfThunderIDAsync` without `AddThunderID` | Thrown by the call |
+| Fetching ThunderID's discovery document or keys, during sign-in or an API request | Thrown from the request; ASP.NET Core may wrap it, so look along `InnerException` |
+| The sign-in callback | ASP.NET Core's `AuthenticationFailureException`, with the `ThunderIDException` as its `InnerException`; inside your `OnRemoteFailure`, it's `context.Failure` itself |
+| Sign-out | `ThunderIDSignOutResult.RevocationError`; sign-out doesn't throw |
+| Back-channel logout | The endpoint answers `400` and logs the code; `LogoutTokenValidator.ValidateAsync` returns it in `Error` |
+
+To send the user somewhere useful when sign-in fails, handle `OnRemoteFailure`. Your handler runs
+after this package has set `context.Failure` to the ThunderID error:
+
+```csharp
+builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme, options =>
+{
+    options.Events.OnRemoteFailure = context =>
+    {
+        if (context.Failure is ThunderIDException error)
+        {
+            context.Response.Redirect("/sign-in-failed?code=" + Uri.EscapeDataString(error.Code));
+            context.HandleResponse();
+        }
+
+        return Task.CompletedTask;
+    };
+});
+```
+
+Two limits on sign-in callback errors: if you set `options.Backchannel` yourself, a refused
+authorization code is reported as a `ThunderIDRuntimeException` without ThunderID's status, and if
+you use `options.EventsType`, your events replace this package's, so `context.Failure` is
+ASP.NET Core's own exception.
+
+Every code:
+
+| Code | `ThunderIDErrorCodes` | Type | Raised when |
+|---|---|---|---|
+| `ASPNETCORE-CONFIG-VAL-IV01` | `InvalidSettings` | Runtime | A setting is missing, invalid or weakened, at startup |
+| `ASPNETCORE-CONFIG-REG-NF01` | `NotRegistered` | Runtime | An operation is used without `AddThunderID` |
+| `ASPNETCORE-SCOPE_POLICY-ASP-IV01` | `ScopePolicyHasNoScopes` | Runtime | `AddScopePolicy` is given no scopes |
+| `ASPNETCORE-LOGOUT_TOKEN-CTOR-IV01` | `ValidatorHasNoClientId` | Runtime | `LogoutTokenValidator` is given no client ID |
+| `ASPNETCORE-SESSION_STORE-CTOR-IV01` | `SessionStoreRetentionInvalid` | Runtime | `InMemoryLogoutSessionStore` is given a retention that isn't positive |
+| `ASPNETCORE-DISCOVERY-GC-IV01` | `DiscoveryIssuerMismatch` | Runtime | The discovery document's issuer isn't `Authority` |
+| `ASPNETCORE-DISCOVERY-GC-HE01` | `DiscoveryRejected` | API | ThunderID answered the request for its discovery document or keys with an error |
+| `ASPNETCORE-DISCOVERY-GC-NE01` | `DiscoveryUnavailable` | Runtime | The discovery document or keys couldn't be fetched |
+| `ASPNETCORE-SIGN_IN-CB-HE01` | `SignInTokenRequestRejected` | API (Runtime with your own `Backchannel`) | ThunderID's token endpoint refused the authorization code |
+| `ASPNETCORE-SIGN_IN-CB-IV01` | `SignInErrorResponse` | Runtime | ThunderID sent an error to the callback, such as `access_denied` |
+| `ASPNETCORE-SIGN_IN-CB-IV02` | `SignInCallbackInvalid` | Runtime | The callback failed a check: state, correlation, nonce or ID token |
+| `ASPNETCORE-SIGN_OUT-REV-HE01` | `RevocationRejected` | API | ThunderID's revocation endpoint answered with an error |
+| `ASPNETCORE-SIGN_OUT-REV-NE01` | `RevocationUnreachable` | Runtime | The revocation endpoint couldn't be reached |
+| `ASPNETCORE-SIGN_OUT-REV-NE02` | `RevocationTimedOut` | Runtime | The revocation endpoint didn't answer within 10 seconds |
+| `ASPNETCORE-SIGN_OUT-REV-NF01` | `RevocationEndpointMissing` | Runtime | The discovery document has no `revocation_endpoint` |
+| `ASPNETCORE-BCL_ENDPOINT-HBL-IV01` | `BackchannelContentType` | Runtime | The logout request isn't `application/x-www-form-urlencoded` |
+| `ASPNETCORE-BCL_ENDPOINT-HBL-IV02` | `BackchannelBodyTooLarge` | Runtime | The logout request body is over the size cap |
+| `ASPNETCORE-BCL_ENDPOINT-HBL-IV03` | `BackchannelTokenCount` | Runtime | The logout request doesn't carry exactly one `logout_token` |
+| `NODE-AUTH_CLIENT-HBL-IV01` | `LogoutTokenReplayed` | Runtime | The logout token's `jti` was already used |
+| `ASPNETCORE-LOGOUT_TOKEN-VLT-IV01` | `LogoutTokenMissing` | Runtime | The logout token is missing |
+| `ASPNETCORE-LOGOUT_TOKEN-VLT-IV02` | `LogoutTokenTooLarge` | Runtime | The logout token is too large |
+| `JS-AUTH_HELPER-VLT-IV01` | `LogoutTokenMalformed` | Runtime | The logout token isn't a signed JWT |
+| `JS-LOGOUT_TOKEN-VLTC-IV02` | `LogoutTokenType` | Runtime | The logout token's `typ` isn't `logout+jwt` |
+| `JS-LOGOUT_TOKEN-VLTC-IV03` | `LogoutTokenAlgorithm` | Runtime | The logout token's signing algorithm isn't one ThunderID lists |
+| `JS-LOGOUT_TOKEN-VLTC-IV04` | `LogoutTokenNonce` | Runtime | The logout token carries a `nonce` |
+| `JS-LOGOUT_TOKEN-VLTC-IV05` | `LogoutTokenEvent` | Runtime | The logout token's `events` has no back-channel logout member |
+| `JS-LOGOUT_TOKEN-VLTC-IV06` | `LogoutTokenIssuer` | Runtime | The logout token's issuer isn't ThunderID's |
+| `JS-LOGOUT_TOKEN-VLTC-IV07` | `LogoutTokenAudience` | Runtime | The logout token's audience doesn't include the client ID |
+| `JS-LOGOUT_TOKEN-VLTC-IV08` | `LogoutTokenIssuedAt` | Runtime | The logout token's `iat` is missing or in the future |
+| `JS-LOGOUT_TOKEN-VLTC-IV09` | `LogoutTokenExpired` | Runtime | The logout token has expired, or has no `exp` |
+| `ASPNETCORE-LOGOUT_TOKEN-VLT-IV03` | `LogoutTokenNotYetValid` | Runtime | The logout token's `nbf` is in the future |
+| `JS-LOGOUT_TOKEN-VLTC-IV11` | `LogoutTokenNoSessionOrSubject` | Runtime | The logout token has neither `sid` nor `sub` |
+| `JS-LOGOUT_TOKEN-VLTC-IV12` | `LogoutTokenJwtIdMissing` | Runtime | The logout token has no `jti` |
+| `JS-CRYPTO_HELPER-VLTS-IV01` | `LogoutTokenSignature` | Runtime | The logout token's signature is invalid |
+| `ASPNETCORE-LOGOUT_TOKEN-VLT-IV04` | `LogoutTokenSigningKeyUnknown` | Runtime | The logout token's key isn't in ThunderID's JWKS, even after a re-fetch |
+| `ASPNETCORE-LOGOUT_TOKEN-VLT-IV05` | `LogoutTokenInvalid` | Runtime | The logout token failed a check not listed above |
+
+## Protecting routes
+
+ThunderID's Express SDK protects a route with `protect()`. In ASP.NET Core you use the framework's
+own authorization, with the schemes this package sets up:
+
+| Express | ASP.NET Core | Without a valid session or token |
+|---|---|---|
+| `protect()` on a page | `.RequireAuthorization()` with `AddThunderID` | Redirects to ThunderID to sign in (Express answers `401`) |
+| `protect(onUnauthenticated)` | `.RequireAuthorization()`, plus `options.Events.OnRedirectToIdentityProvider` calling `context.HandleResponse()` and writing your own response | Your response |
+| (no equivalent) | `.RequireAuthorization()` with `AddThunderIDApi` | `401` with `WWW-Authenticate: Bearer` |
+| (no equivalent) | `.RequireAuthorization("policy")` with `AddScopePolicy` | `401` without a token, `403` with a token that lacks the scope |
+
+A session ended by back-channel logout counts as no session. A protected route used without
+`AddThunderID` or `AddThunderIDApi` fails with ASP.NET Core's own `InvalidOperationException`, at
+startup or on the first request, and is never let through.
 
 ## Running in production
 

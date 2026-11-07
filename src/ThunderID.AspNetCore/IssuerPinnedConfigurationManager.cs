@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.Options;
@@ -15,14 +16,43 @@ internal sealed class IssuerPinnedConfigurationManager(IConfigurationManager<Ope
 {
     public async Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel)
     {
-        var configuration = await inner.GetConfigurationAsync(cancel);
+        OpenIdConnectConfiguration configuration;
+        try
+        {
+            configuration = await inner.GetConfigurationAsync(cancel);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The document retriever records ThunderID's HTTP status when it answered with an error.
+            const string message = "ThunderID's discovery document or signing keys could not be fetched.";
+            throw StatusCode(ex) is { } status
+                ? new ThunderIDApiException(ThunderIDErrorCodes.DiscoveryRejected, message, (int)status, ReasonPhrase(status), ex)
+                : new ThunderIDRuntimeException(ThunderIDErrorCodes.DiscoveryUnavailable, message, ex);
+        }
+
         if (!string.Equals(configuration.Issuer, authority, StringComparison.Ordinal))
         {
-            throw new DiscoveryIssuerMismatchException(configuration.Issuer, authority);
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.DiscoveryIssuerMismatch,
+                $"The discovery document's issuer '{configuration.Issuer}' doesn't match the configured Authority '{authority}'.");
         }
 
         return configuration;
     }
+
+    private static HttpStatusCode? StatusCode(Exception exception)
+    {
+        for (Exception? e = exception; e is not null; e = e.InnerException)
+        {
+            if (e.Data[HttpDocumentRetriever.StatusCode] is HttpStatusCode status)
+            {
+                return status;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ReasonPhrase(HttpStatusCode status) => new HttpResponseMessage(status).ReasonPhrase;
 
     public void RequestRefresh() => inner.RequestRefresh();
 
@@ -57,7 +87,3 @@ internal sealed class IssuerPinnedConfigurationManager(IConfigurationManager<Ope
         }
     }
 }
-
-/// <summary>The discovery document named an issuer other than the configured authority.</summary>
-internal sealed class DiscoveryIssuerMismatchException(string? issuer, string authority)
-    : InvalidOperationException($"The discovery document's issuer '{issuer}' doesn't match the configured Authority '{authority}'.");

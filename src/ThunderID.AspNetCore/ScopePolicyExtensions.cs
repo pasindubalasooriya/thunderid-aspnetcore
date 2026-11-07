@@ -13,7 +13,7 @@ public static class ScopePolicyExtensions
     {
         if (scopes.Length == 0)
         {
-            throw new ArgumentException("At least one scope is required.", nameof(scopes));
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.ScopePolicyHasNoScopes, $"AddScopePolicy(\"{name}\") needs at least one scope.");
         }
 
         return builder.AddPolicy(name, policy => policy

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using ThunderID.AspNetCore.BackchannelLogout;
 
@@ -20,6 +21,14 @@ public static class ThunderIDAuthenticationExtensions
     {
         var settings = new ThunderIDOptions();
         configure(settings);
+
+        services.TryAddSingleton<ThunderIDRegistration>();
+        // Before AddOpenIdConnect, so these run ahead of the handler's own post-configure: that one
+        // would otherwise fail first on a missing or http Authority with a framework error, and it
+        // builds the backchannel the token status capture has to wrap.
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, OpenIdConnectRequiredSettings>();
+        services.AddHttpContextAccessor();
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, SignInFailures.CaptureTokenStatus>();
 
         // Back-channel logout: a replaceable store (in memory by default, kept as long as a cookie
         // can stay valid) and a validator that shares the OIDC handler's discovery and JWKS cache.
@@ -82,8 +91,11 @@ public static class ThunderIDAuthenticationExtensions
             });
 
         services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, IssuerPinnedConfigurationManager.ForOpenIdConnect>();
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, SignInFailures.WrapRemoteFailure>();
+        services.AddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, OwnedAuthorizationParameters>();
         services.AddSingleton<IValidateOptions<OpenIdConnectOptions>, OpenIdConnectSettingsValidator>();
-        services.AddOptions<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme).ValidateOnStart();
+        services.AddHostedService(sp => new SettingsStartupCheck<OpenIdConnectOptions>(
+            sp.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>(), OpenIdConnectDefaults.AuthenticationScheme));
         return builder;
     }
 
@@ -95,6 +107,8 @@ public static class ThunderIDAuthenticationExtensions
     {
         var settings = new ThunderIDApiOptions();
         configure(settings);
+
+        services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, JwtBearerRequiredSettings>();
 
         var builder = services
             .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -110,8 +124,21 @@ public static class ThunderIDAuthenticationExtensions
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>, IssuerPinnedConfigurationManager.ForJwtBearer>();
         services.AddSingleton<IValidateOptions<JwtBearerOptions>, JwtBearerSettingsValidator>();
-        services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme).ValidateOnStart();
+        services.AddHostedService(sp => new SettingsStartupCheck<JwtBearerOptions>(
+            sp.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>(), JwtBearerDefaults.AuthenticationScheme));
         return builder;
+    }
+
+    // Present only when AddThunderID ran, so an operation used without it can fail with a ThunderID error.
+    internal sealed class ThunderIDRegistration;
+
+    internal static void EnsureRegistered(IServiceProvider services, string operation)
+    {
+        if (services.GetService<ThunderIDRegistration>() is null)
+        {
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.NotRegistered,
+                $"{operation} needs AddThunderID. Call builder.Services.AddThunderID(...) before using it.");
+        }
     }
 
     // ThunderID releases only the attributes a user has. Without a "name" claim,

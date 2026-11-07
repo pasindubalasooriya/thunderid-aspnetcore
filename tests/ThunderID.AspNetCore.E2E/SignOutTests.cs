@@ -16,7 +16,7 @@ public sealed class SignOutTests : E2ETest
 
         await SignOutAsync(page);
 
-        Assert.False(App.LastSignOut!.RevocationFailed, App.LastSignOut.RevocationError);
+        Assert.False(App.LastSignOut!.RevocationFailed, App.LastSignOut.RevocationError?.Message);
         Assert.Equal("invalid_grant", await RefreshErrorAsync(refreshToken!));
         Assert.Equal("Signed out", await page.Locator("#status").InnerTextAsync());
 

@@ -8,7 +8,7 @@
 
   <PropertyGroup>
     <PackageId>ThunderID.AspNetCore</PackageId>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Authors>Pasindu Balasooriya</Authors>
     <Description>Sign users in to ASP.NET Core apps with ThunderID, protect APIs with ThunderID access tokens, and end sessions on OIDC back-channel logout.</Description>
     <PackageTags>thunderid;openid-connect;oidc;oauth2;authentication;aspnetcore;backchannel-logout</PackageTags>

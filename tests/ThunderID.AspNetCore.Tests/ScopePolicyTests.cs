@@ -63,6 +63,10 @@ public class ScopePolicyTests
     }
 
     [Fact]
-    public void Policy_without_scopes_is_rejected() =>
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddAuthorizationBuilder().AddScopePolicy("test"));
+    public void Policy_without_scopes_is_rejected()
+    {
+        var ex = Assert.Throws<ThunderIDRuntimeException>(() => new ServiceCollection().AddAuthorizationBuilder().AddScopePolicy("test"));
+
+        Assert.Equal(ThunderIDErrorCodes.ScopePolicyHasNoScopes, ex.Code);
+    }
 }

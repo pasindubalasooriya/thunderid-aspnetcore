@@ -22,7 +22,7 @@ public sealed class InMemoryLogoutSessionStore : ILogoutSessionStore
     {
         if (retention <= TimeSpan.Zero)
         {
-            throw new ArgumentOutOfRangeException(nameof(retention));
+            throw new ThunderIDRuntimeException(ThunderIDErrorCodes.SessionStoreRetentionInvalid, "InMemoryLogoutSessionStore needs a positive retention.");
         }
 
         _retention = retention;
