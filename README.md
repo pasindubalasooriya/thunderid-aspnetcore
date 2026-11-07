@@ -1,8 +1,8 @@
 # ThunderID for ASP.NET Core
 
 Sign users in to ASP.NET Core apps with [ThunderID](https://github.com/thunder-id/thunderid), the
-open-source IAM stack, sign them out at ThunderID too, and log them out when their ThunderID
-session ends.
+open-source IAM stack, keep their tokens fresh, sign them out at ThunderID too, and log them out
+when their ThunderID session ends.
 
 ASP.NET Core already speaks OpenID Connect, so this library doesn't reimplement login. It sets the
 options ThunderID needs that differ from ASP.NET Core's defaults, and it adds the one piece ASP.NET
@@ -21,7 +21,7 @@ notes what changed.
 
 **Specification:** implements the
 [ThunderID SDK specification](https://github.com/thunder-id/thunderid/blob/main/docs-internals/sdk-development/spec.md)
-v0.8, as a Framework Specific SDK for ASP.NET Core.
+v0.9, as a Framework Specific SDK for ASP.NET Core.
 
 **Layers:** there's no ThunderID .NET SDK to build on, so the protocol layer is ASP.NET Core's own
 OpenID Connect and JWT bearer handlers (`Microsoft.AspNetCore.Authentication.OpenIdConnect`,
@@ -34,7 +34,11 @@ deliberate deviation from the specification's layering rule.
 
 | API | What it does |
 |---|---|
-| `services.AddThunderID(...)` | Cookie + OpenID Connect sign-in with ThunderID's settings: `response_mode=query`, a nonce within ThunderID's 64-character limit, PKCE, short JWT claim names, a `name` fallback from `given_name` and `family_name`, and an optional RFC 8707 `resource`. Also registers the back-channel logout validator and session store. Checks its configuration when the app starts (see [Configuration](#configuration)). |
+| `services.AddThunderID(...)` | Cookie + OpenID Connect sign-in with ThunderID's settings: `response_mode=query`, a nonce within ThunderID's 64-character limit, PKCE, short JWT claim names, a `name` fallback from `given_name` and `family_name`, and an optional RFC 8707 `resource`. Refreshes the session's tokens ahead of expiry (see [Tokens](#tokens)). Also registers the back-channel logout validator and session store. Checks its configuration when the app starts (see [Configuration](#configuration)). |
+| `services.AddThunderID(configuration.GetSection("ThunderID"))` | The same, with the settings read from configuration. A reload applies a new `ClientSecret`, `Scopes`, `Resource` or `RefreshBeforeExpiry` without a restart (see [Changing settings without a restart](#changing-settings-without-a-restart)). |
+| `HttpContext.GetThunderIDAccessTokenAsync()` | The signed-in user's access token, refreshed first if it was close to expiry, or null without a session. |
+| `HttpContext.ExchangeThunderIDTokenAsync(request)` | RFC 8693 token exchange: trades the user's access token for one meant for another resource server. The session's own tokens don't change. |
+| `ThunderIDJwt.DecodeUnverified(token)` | Reads a JWT's claims **without verifying it**, to show or log them. Never use it to authorize. |
 | `HttpContext.SignOutOfThunderIDAsync(redirectUri)` | Signs out at ThunderID and locally: revokes the refresh token (or the access token, when there's no refresh token) at ThunderID's revocation endpoint, clears the cookie, then redirects to ThunderID's end-session endpoint. The cookie is cleared even when revocation fails, and the returned `ThunderIDSignOutResult` says so (see [Sign-out](#sign-out)). |
 | `app.MapThunderIDBackchannelLogout()` | `POST /backchannel-logout`. Validates ThunderID's `logout_token` and records the session as ended. The next request with that session's cookie is signed out. An overload takes a callback that receives the ended session's `sid` and `sub`. |
 | `services.AddThunderIDApi(...)` | JwtBearer for APIs, keeping claim names as they appear in the token. |
@@ -157,15 +161,17 @@ Refresh the first tab: you're signed out.
 dotnet test
 ```
 
-134 tests, no network access. They cover every logout token rejection rule, the session store,
+250 tests, no network access. They cover every logout token rejection rule, the session store,
 the endpoint (status codes, content type, body cap, `no-store`, cookie revocation) and its
 callback, sign-out (revocation before the cookie is cleared, and each way revocation can fail),
-the scope policy, the discovery issuer check, and the configuration checks at startup.
+token refresh (timing, one refresh for concurrent requests, refused and unreachable), token
+exchange, decoding, configuration reload, every error code, the scope policy, the discovery issuer
+check, and the configuration checks at startup.
 
 ### End-to-end tests
 
-`tests/ThunderID.AspNetCore.E2E` signs in, signs up, signs out and receives back-channel logout
-against a real ThunderID in Docker, with a Playwright browser. The ThunderID is built from a pinned
+`tests/ThunderID.AspNetCore.E2E` signs in, signs up, signs out, receives back-channel logout,
+refreshes tokens and exchanges them against a real ThunderID in Docker, with a Playwright browser. The ThunderID is built from a pinned
 commit and set up entirely from the files in `tests/e2e/thunderid`; its
 [README](tests/e2e/thunderid/README.md) has the steps. The credentials in those files are fixed
 **test-only** values for that container; never reuse them.
@@ -186,6 +192,7 @@ Authority must be an absolute https URL. ClientId is required.`
 - The security checks can't be turned off, including through ASP.NET Core's own options (for
   example `PostConfigure`): PKCE, the `code` response type, the nonce, and issuer, audience,
   lifetime and signature validation. A weakened setting fails startup with the same error.
+- `RefreshBeforeExpiry` can't be negative.
 - The discovery document's `issuer` must equal `Authority` exactly, or none of its endpoints or
   keys are used. The comparison is exact, so `https://localhost:8090/` and `https://localhost:8090`
   don't match. Use the value ThunderID's discovery document reports.
@@ -210,11 +217,52 @@ The specification's configuration keys, and what this package does with each:
 | `mode`, `applicationId` | Not supported: redirect mode only |
 | `grantType` | Not supported: authorization code only |
 | `instanceId` | Not supported: one ThunderID sign-in scheme per app (a second `AddThunderID` throws) |
-| `tokenLifecycle` | Not supported: tokens aren't refreshed yet |
+| `tokenLifecycle` | `RefreshBeforeExpiry`, default 60 seconds (see [Tokens](#tokens)) |
 | `signInUrl`, `signUpUrl`, `signOutOptions`, `signUpOptions`, `authorizationDetails` | Not supported |
 | `allowedExternalUrls` | Not applicable: the SDK never attaches tokens to outbound requests; your code does |
 | `organizationHandle`, `organizationChain` | Not supported |
 | `session`, `preferences`, `components`, `extensions` | Not applicable: browser and UI SDKs only |
+
+## Changing settings without a restart
+
+This is the specification's `reInitialize`. Pass a configuration section instead of a callback:
+
+```csharp
+builder.Services.AddThunderID(builder.Configuration.GetSection("ThunderID"));
+```
+
+```json
+{
+  "ThunderID": {
+    "Authority": "https://localhost:8090",
+    "ClientId": "<client id>",
+    "Scopes": [ "billing:read" ],
+    "RefreshBeforeExpiry": "00:02:00"
+  }
+}
+```
+
+Keep `ClientSecret` out of `appsettings.json`: user-secrets, an environment variable
+(`ThunderID__ClientSecret`) or a secret store fill in the same key.
+
+When the configuration reloads, for example after `appsettings.json` is edited or a secret store
+rotates the secret, the new values apply without a restart:
+
+- `ClientSecret` from the next call to ThunderID's token endpoint;
+- `Scopes` and `Resource` from the next sign-in;
+- `RefreshBeforeExpiry` from the next request.
+
+A reload applies whole or not at all. In these cases nothing changes, and a warning names the
+setting, never its value:
+
+| Reload | Code |
+|---|---|
+| `Authority` or `ClientId` changed. Sessions, the issuer check and back-channel logout depend on them, so restart the app to change them | `ASPNETCORE-CONFIG-RLD-IV01` |
+| An invalid value, such as a negative or unreadable `RefreshBeforeExpiry` | `ASPNETCORE-CONFIG-VAL-IV01` |
+
+`Authority` is compared as written, so adding or removing a trailing slash counts as a change. A
+reload that leaves ThunderID's settings as they were does nothing. Invalid settings at startup fail
+the same way as with the callback (see [Configuration](#configuration)).
 
 ## Sign-out
 
@@ -266,6 +314,73 @@ It runs after the logout is recorded, and only for a valid token. If it throws, 
 logged and ThunderID still gets `200`, because the session has already ended. It doesn't say how
 many sessions ended: cookie sessions end on their next request, so the count isn't known.
 
+## Tokens
+
+### Refresh
+
+On each request with a session, `AddThunderID` checks when the access token expires. Within
+`RefreshBeforeExpiry` of that (default 60 seconds), it sends the refresh token to ThunderID and
+rewrites the cookie with the new tokens before your code runs, so `GetTokenAsync("access_token")`
+and `GetThunderIDAccessTokenAsync()` return the new access token.
+
+- ThunderID issues a refresh token only when the app's grant types include `refresh_token`.
+  Without one, the session keeps its access token until it expires.
+- ThunderID rotates the refresh token on each use, and treats an old one sent again as a replay:
+  it revokes all the session's tokens. So each refresh token is sent once. Requests that arrive
+  together share one refresh, and for 60 seconds afterwards a request that still carries the old
+  cookie gets the same new tokens instead of sending the old refresh token again.
+- **ThunderID refuses the refresh** (a 4xx, such as `invalid_grant` after the session was
+  revoked): the local session ends. The cookie is cleared and the request continues signed out,
+  so a protected page sends the user to sign in. Logged as a warning with `JS-AUTH_CORE-RAT2-HE04`.
+- **ThunderID can't be reached**, doesn't answer within 10 seconds, or answers with a 5xx: the
+  session keeps its current tokens and the next request tries again. Logged as a warning with the
+  code.
+- Back-channel logout is checked first, so a session ThunderID has ended is never refreshed.
+
+### Access token
+
+```csharp
+// Null without a session, or after a refused refresh ended it.
+var accessToken = await HttpContext.GetThunderIDAccessTokenAsync();
+```
+
+When ThunderID couldn't be reached to refresh it, this is the current token, which may be close to
+expiry.
+
+### Token exchange
+
+```csharp
+var exchanged = await HttpContext.ExchangeThunderIDTokenAsync(new ThunderIDTokenExchangeRequest
+{
+    Resource = "https://billing.example.com",
+});
+// exchanged.AccessToken has "https://billing.example.com" as its audience.
+```
+
+- The app's grant types in ThunderID must include `urn:ietf:params:oauth:grant-type:token-exchange`.
+- `Resource` must be a resource server registered in ThunderID. Otherwise ThunderID answers `400`
+  `invalid_target`, thrown as a `ThunderIDApiException` with code `JS-AUTH_CORE-RCG-HE03`.
+- By default it exchanges the signed-in user's access token, refreshed first if due. Set
+  `SubjectToken` to exchange another token.
+- ThunderID leaves out scopes the user isn't allowed, without an error, so check
+  `exchanged.Scopes`. It doesn't use `Audience` (set `Resource` instead), and it doesn't issue a
+  refresh token through an exchange.
+- The request is checked before anything is sent, and every problem is reported at once, by field
+  name, with `ASPNETCORE-TOKEN_EXCHANGE-EXC-IV01`.
+- The session's own tokens never change.
+
+### Reading a token's claims
+
+```csharp
+var claims = ThunderIDJwt.DecodeUnverified(accessToken);
+var audience = claims["aud"];
+```
+
+**It doesn't verify anything:** not the signature, the issuer, the audience or the expiry. Use it
+to show or log what a token says, never to decide what a caller may do; an API validates tokens
+with `AddThunderIDApi`. A value that isn't a JWT with a JSON payload throws a
+`ThunderIDRuntimeException` with code `JS-CRYPTO_UTIL-DIT-IV02`, and the message never quotes it.
+
 ## Errors
 
 Every error this package raises is a `ThunderIDException`, so one `catch` covers them all:
@@ -287,10 +402,13 @@ Where each kind of error reaches your code:
 |---|---|
 | Startup | Thrown when the app starts |
 | `AddScopePolicy`, `LogoutTokenValidator`, `InMemoryLogoutSessionStore` | Thrown by the call, for an invalid argument |
-| `MapThunderIDBackchannelLogout`, `SignOutOfThunderIDAsync` without `AddThunderID` | Thrown by the call |
+| `MapThunderIDBackchannelLogout`, `SignOutOfThunderIDAsync`, `GetThunderIDAccessTokenAsync` or `ExchangeThunderIDTokenAsync` without `AddThunderID` | Thrown by the call |
 | Fetching ThunderID's discovery document or keys, during sign-in or an API request | Thrown from the request; ASP.NET Core may wrap it, so look along `InnerException` |
 | The sign-in callback | ASP.NET Core's `AuthenticationFailureException`, with the `ThunderIDException` as its `InnerException`; inside your `OnRemoteFailure`, it's `context.Failure` itself |
 | Sign-out | `ThunderIDSignOutResult.RevocationError`; sign-out doesn't throw |
+| Token refresh | Logged as a warning. A refusal ends the session, so the request continues signed out |
+| `ExchangeThunderIDTokenAsync`, `ThunderIDJwt.DecodeUnverified` | Thrown by the call |
+| A configuration reload | Logged as a warning; the previous settings stay |
 | Back-channel logout | The endpoint answers `400` and logs the code; `LogoutTokenValidator.ValidateAsync` returns it in `Error` |
 
 To send the user somewhere useful when sign-in fails, handle `OnRemoteFailure`. Your handler runs
@@ -336,6 +454,21 @@ Every code:
 | `ASPNETCORE-SIGN_OUT-REV-NE01` | `RevocationUnreachable` | Runtime | The revocation endpoint couldn't be reached |
 | `ASPNETCORE-SIGN_OUT-REV-NE02` | `RevocationTimedOut` | Runtime | The revocation endpoint didn't answer within 10 seconds |
 | `ASPNETCORE-SIGN_OUT-REV-NF01` | `RevocationEndpointMissing` | Runtime | The discovery document has no `revocation_endpoint` |
+| `JS-AUTH_CORE-RAT2-HE04` | `RefreshRejected` | API | ThunderID's token endpoint refused the refresh token (a 4xx), so the local session ends |
+| `ASPNETCORE-REFRESH-RAT-HE01` | `RefreshServerError` | API | ThunderID's token endpoint answered the refresh with a 5xx; the session is kept |
+| `ASPNETCORE-REFRESH-RAT-IV01` | `RefreshResponseInvalid` | Runtime | The refresh answer isn't a token response; the session is kept |
+| `JS-AUTH_CORE-RAT2-NR03` | `RefreshUnreachable` | Runtime | The token endpoint couldn't be reached to refresh; the session is kept |
+| `ASPNETCORE-REFRESH-RAT-NE01` | `RefreshTimedOut` | Runtime | The token endpoint didn't answer the refresh within 10 seconds; the session is kept |
+| `JS-AUTH_CORE-RAT2-NF02` | `RefreshEndpointMissing` | Runtime | The discovery document has no `token_endpoint` to refresh with |
+| `ASPNETCORE-TOKEN_EXCHANGE-EXC-IV01` | `TokenExchangeInvalid` | Runtime | The token exchange request is invalid, so it wasn't sent |
+| `ASPNETCORE-TOKEN_EXCHANGE-EXC-NF01` | `TokenExchangeNoSubject` | Runtime | No subject token was given and no user is signed in |
+| `JS-AUTH_CORE-RCG-NF01` | `TokenExchangeEndpointMissing` | Runtime | The discovery document has no `token_endpoint` to exchange at |
+| `JS-AUTH_CORE-RCG-HE03` | `TokenExchangeRejected` | API | ThunderID's token endpoint refused the exchange |
+| `JS-AUTH_CORE-RCG-NE02` | `TokenExchangeUnreachable` | Runtime | The token endpoint couldn't be reached for the exchange |
+| `ASPNETCORE-TOKEN_EXCHANGE-EXC-NE01` | `TokenExchangeTimedOut` | Runtime | The token endpoint didn't answer the exchange within 10 seconds |
+| `ASPNETCORE-TOKEN_EXCHANGE-EXC-IV02` | `TokenExchangeResponseInvalid` | Runtime | The exchange answer has no access token |
+| `JS-CRYPTO_UTIL-DIT-IV02` | `JwtMalformed` | Runtime | `ThunderIDJwt.DecodeUnverified` was given something that isn't a JWT with a JSON payload |
+| `ASPNETCORE-CONFIG-RLD-IV01` | `ReloadImmutableSetting` | Runtime | A configuration reload changed `Authority` or `ClientId`; the previous settings stay |
 | `ASPNETCORE-BCL_ENDPOINT-HBL-IV01` | `BackchannelContentType` | Runtime | The logout request isn't `application/x-www-form-urlencoded` |
 | `ASPNETCORE-BCL_ENDPOINT-HBL-IV02` | `BackchannelBodyTooLarge` | Runtime | The logout request body is over the size cap |
 | `ASPNETCORE-BCL_ENDPOINT-HBL-IV03` | `BackchannelTokenCount` | Runtime | The logout request doesn't carry exactly one `logout_token` |
@@ -414,6 +547,9 @@ Where ASP.NET Core and ThunderID don't fit together out of the box, and what han
   your own `ILogoutSessionStore` backed by a shared cache or database.
 - **Logout takes effect on the next request.** The server can't delete a browser's cookie, so the
   cookie is refused the next time it's sent.
+- **One refresh per refresh token holds within one process.** With more than one instance and
+  no sticky sessions, two instances can refresh the same session at once; ThunderID then treats
+  the second as a replay and ends the session.
 - **Access tokens already issued stay valid** until they expire. Back-channel logout ends the
   web app's session; APIs aren't notified.
 - **Signature algorithms**: logout tokens are verified with the algorithms ThunderID lists in
