@@ -6,8 +6,14 @@ public sealed class ThunderIDOptions
     /// <summary>ThunderID's issuer URL, for example <c>https://localhost:8090</c>.</summary>
     public string Authority { get; set; } = "";
 
+    /// <summary>The application's client ID in ThunderID. Required.</summary>
     public string ClientId { get; set; } = "";
 
+    /// <summary>
+    /// The application's client secret, for a confidential client. Sent with the token, refresh,
+    /// revocation and token exchange requests. Leave it null for a public client. Keep it out of
+    /// source control, for example in user secrets or an environment variable.
+    /// </summary>
     public string? ClientSecret { get; set; }
 
     /// <summary>Scopes requested in addition to <c>openid</c>, <c>profile</c> and <c>email</c>.</summary>

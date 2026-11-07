@@ -14,6 +14,9 @@ public sealed class InMemoryLogoutSessionStore : ILogoutSessionStore
     private readonly TimeSpan _clockSkew;
     private readonly TimeProvider _timeProvider;
 
+    /// <summary>Creates a store that remembers ended sessions for <paramref name="retention"/>.</summary>
+    /// <param name="retention">How long an ended session is remembered. Must be positive.</param>
+    /// <param name="timeProvider">The clock. Defaults to <see cref="TimeProvider.System"/>.</param>
     /// <param name="clockSkew">
     /// How long after a <c>sub</c>-only logout's <c>iat</c> a session can begin and still be ended,
     /// since the two clocks may disagree. Defaults to <see cref="LogoutTokenValidator.DefaultClockSkew"/>.
@@ -30,6 +33,7 @@ public sealed class InMemoryLogoutSessionStore : ILogoutSessionStore
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
+    /// <inheritdoc/>
     public Task<bool> TryRecordLogoutAsync(LogoutToken token, CancellationToken cancellationToken = default)
     {
         var now = _timeProvider.GetUtcNow();
@@ -62,6 +66,7 @@ public sealed class InMemoryLogoutSessionStore : ILogoutSessionStore
         }
     }
 
+    /// <inheritdoc/>
     public Task<bool> IsSessionEndedAsync(string? sessionId, string? subject, DateTimeOffset? authTime, CancellationToken cancellationToken = default)
     {
         var now = _timeProvider.GetUtcNow();

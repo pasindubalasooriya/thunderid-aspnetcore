@@ -13,6 +13,7 @@ namespace ThunderID.AspNetCore.BackchannelLogout;
 /// </summary>
 public sealed class LogoutTokenValidator
 {
+    /// <summary>The member a logout token's <c>events</c> claim must contain.</summary>
     public const string BackchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout";
 
     /// <summary>
@@ -31,10 +32,14 @@ public sealed class LogoutTokenValidator
     private readonly TimeProvider _timeProvider;
     private readonly JsonWebTokenHandler _handler = new();
 
+    /// <summary>Creates a validator for logout tokens issued to <paramref name="clientId"/>.</summary>
     /// <param name="configurationManager">
     /// Source of the issuer and signing keys. A <see cref="ConfigurationManager{T}"/> bounds how
     /// often an unknown key identifier can trigger a JWKS re-fetch (its <c>RefreshInterval</c>).
     /// </param>
+    /// <param name="clientId">The application's client ID, which the token's <c>aud</c> must contain.</param>
+    /// <param name="clockSkew">Clock tolerance for <c>iat</c> and <c>exp</c>. Defaults to <see cref="DefaultClockSkew"/>.</param>
+    /// <param name="timeProvider">The clock. Defaults to <see cref="TimeProvider.System"/>.</param>
     public LogoutTokenValidator(
         IConfigurationManager<OpenIdConnectConfiguration> configurationManager,
         string clientId,
@@ -52,6 +57,12 @@ public sealed class LogoutTokenValidator
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
+    /// <summary>
+    /// Validates a logout token: signature, issuer, audience, lifetime, <c>typ</c>, the
+    /// <c>events</c> member, no <c>nonce</c>, a <c>jti</c>, and a <c>sid</c> or <c>sub</c>. An
+    /// invalid token doesn't throw: the result's <see cref="LogoutTokenValidationResult.Error"/>
+    /// says which check failed.
+    /// </summary>
     public async Task<LogoutTokenValidationResult> ValidateAsync(string? logoutToken, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(logoutToken))
