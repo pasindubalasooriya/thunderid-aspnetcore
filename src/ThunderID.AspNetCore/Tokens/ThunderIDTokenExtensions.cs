@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace ThunderID.AspNetCore;
 
+/// <summary>The signed-in user's tokens: reading the access token and exchanging it.</summary>
 public static class ThunderIDTokenExtensions
 {
     internal static readonly TimeSpan ExchangeTimeout = TimeSpan.FromSeconds(10);

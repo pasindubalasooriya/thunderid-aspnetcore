@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace ThunderID.AspNetCore;
 
+/// <summary>Authorization policies for the scopes in a ThunderID access token.</summary>
 public static class ScopePolicyExtensions
 {
     /// <summary>

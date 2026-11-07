@@ -13,6 +13,7 @@ using ThunderID.AspNetCore.BackchannelLogout;
 
 namespace ThunderID.AspNetCore;
 
+/// <summary>Registers ThunderID sign-in for web apps and token validation for APIs.</summary>
 public static class ThunderIDAuthenticationExtensions
 {
     /// <summary>

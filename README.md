@@ -16,8 +16,8 @@ Core doesn't have at all: a receiver for **OIDC back-channel logout**.
 dotnet add package ThunderID.AspNetCore
 ```
 
-Requires .NET 10. Versions are `0.x` for now, so a minor version can change the API; each release
-notes what changed.
+Requires .NET 10. From 1.0.0 the package follows semantic versioning: see
+[Versioning](#versioning).
 
 **Specification:** implements the
 [ThunderID SDK specification](https://github.com/thunder-id/thunderid/blob/main/docs-internals/sdk-development/spec.md)
@@ -211,7 +211,7 @@ The specification's configuration keys, and what this package does with each:
 | `afterSignInUrl`, `afterSignOutUrl` | ASP.NET Core's `AuthenticationProperties.RedirectUri` on `Challenge` and `SignOut` |
 | `signInOptions` | ASP.NET Core's `OpenIdConnectOptions.AdditionalAuthorizationParameters`. Parameters the SDK sets itself (`client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`) are ignored, and a warning at startup names them |
 | `http`, `tokenRequest` | ASP.NET Core's `BackchannelHttpHandler` and `BackchannelTimeout` |
-| `storage` | ASP.NET Core's cookie. Supply an `ITicketStore` through `CookieAuthenticationOptions.SessionStore` to keep sessions on the server |
+| `storage` | ASP.NET Core's cookie. Supply an `ITicketStore` through `CookieAuthenticationOptions.SessionStore` to keep sessions on the server. The cookie's Data Protection encryption covers the tokens only while they're in the cookie: with an `ITicketStore`, they're protected only as well as that store protects them |
 | `tokenValidation` | Not configurable: validation is always on |
 | `discovery`, `endpoints` | Not supported: endpoints always come from `Authority`'s discovery document |
 | `mode`, `applicationId` | Not supported: redirect mode only |
@@ -559,6 +559,24 @@ Where ASP.NET Core and ThunderID don't fit together out of the box, and what han
 - **Not supported**: encrypted (JWE) logout tokens, so back-channel logout doesn't work for a
   client configured for ID token encryption. Also not supported: front-channel logout, and
   embedded (app-native) login.
+
+## Versioning
+
+From 1.0.0, ThunderID.AspNetCore follows [semantic versioning](https://semver.org):
+
+- **Within 1.x, nothing public is removed or changed incompatibly.** Minor versions add API;
+  patch versions fix bugs. The public API is compared against the previous release's tag before
+  every release.
+- **Error codes keep their meaning.** A code in `ThunderIDErrorCodes` never changes what it
+  reports. Minor versions can add codes, so a `switch` on `Code` needs a default case.
+- **Defaults change only in a major version**: the scopes requested, `RefreshBeforeExpiry`, the
+  cookie settings, and the checks made at startup.
+- **Supported .NET versions are dropped only in a major version.** A minor version can add one.
+- **Security fixes are the exception.** If a vulnerability can only be fixed by refusing
+  something that was accepted before, the fix ships in a minor or patch version, and its release
+  notes say what is now refused.
+
+Each release's notes are in [docs/release-notes](docs/release-notes).
 
 ## Repository layout
 

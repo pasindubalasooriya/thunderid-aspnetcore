@@ -41,8 +41,8 @@ builder.Services.AddAuthorizationBuilder()
 | `AddScopePolicy` | Authorization policy for ThunderID's space-delimited `scope` claim |
 | `ILogoutSessionStore` | Where ended sessions are kept; in memory by default, replace it for more than one instance |
 
-Implements the ThunderID SDK specification v0.9. Versions are `0.x` for now, so a minor version
-can change the API.
+Implements the ThunderID SDK specification v0.9. Follows semantic versioning from 1.0.0: nothing
+public is removed or changed incompatibly within 1.x, and error codes keep their meaning.
 
 Quickstart, configuration, production notes and limits:
 [github.com/pasindubalasooriya/thunderid-aspnetcore](https://github.com/pasindubalasooriya/thunderid-aspnetcore)

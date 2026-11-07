@@ -8,6 +8,7 @@ using Microsoft.Net.Http.Headers;
 
 namespace ThunderID.AspNetCore.BackchannelLogout;
 
+/// <summary>Maps the endpoint that receives ThunderID's back-channel logout notifications.</summary>
 public static class BackchannelLogoutEndpoint
 {
     // A form body with one logout token is well under 2 KB.

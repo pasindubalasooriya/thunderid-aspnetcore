@@ -3,6 +3,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace ThunderID.AspNetCore;
 
+/// <summary>Reads a JWT's claims for display or logging, without verifying it.</summary>
 public static class ThunderIDJwt
 {
     /// <summary>

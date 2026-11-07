@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace ThunderID.AspNetCore;
 
+/// <summary>Signs the user out of the app and of ThunderID.</summary>
 public static class ThunderIDSignOutExtensions
 {
     // Sign-out waits on revocation, so an unreachable ThunderID must not hold it for the

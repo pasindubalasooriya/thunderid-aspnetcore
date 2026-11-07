@@ -3,12 +3,16 @@ namespace ThunderID.AspNetCore;
 /// <summary>The RFC 8693 token type identifiers ThunderID accepts.</summary>
 public static class ThunderIDTokenTypes
 {
+    /// <summary>An OAuth 2.0 access token.</summary>
     public const string AccessToken = "urn:ietf:params:oauth:token-type:access_token";
 
+    /// <summary>An OAuth 2.0 refresh token.</summary>
     public const string RefreshToken = "urn:ietf:params:oauth:token-type:refresh_token";
 
+    /// <summary>An OpenID Connect ID token.</summary>
     public const string IdToken = "urn:ietf:params:oauth:token-type:id_token";
 
+    /// <summary>A JWT.</summary>
     public const string Jwt = "urn:ietf:params:oauth:token-type:jwt";
 }
 
@@ -39,6 +43,7 @@ public sealed class ThunderIDTokenExchangeRequest
     /// <summary>A token for the party acting on the subject's behalf. Needs <see cref="ActorTokenType"/>.</summary>
     public string? ActorToken { get; set; }
 
+    /// <summary>The actor token's type, such as <see cref="ThunderIDTokenTypes.AccessToken"/>. Required with <see cref="ActorToken"/>.</summary>
     public string? ActorTokenType { get; set; }
 }
 
@@ -58,15 +63,18 @@ public sealed class ThunderIDTokenExchangeResult
     /// <summary>The issued token. Its type is <see cref="IssuedTokenType"/>, despite the name RFC 8693 gives the field.</summary>
     public string AccessToken { get; }
 
+    /// <summary>The issued token's type, from <c>issued_token_type</c>, such as <see cref="ThunderIDTokenTypes.AccessToken"/>.</summary>
     public string? IssuedTokenType { get; }
 
     /// <summary>How to send it, usually <c>Bearer</c>.</summary>
     public string? TokenType { get; }
 
+    /// <summary>How long the issued token is valid, from <c>expires_in</c>. Null when ThunderID didn't say.</summary>
     public TimeSpan? ExpiresIn { get; }
 
     /// <summary>The scopes granted, which can be fewer than requested. Empty when ThunderID didn't say.</summary>
     public IReadOnlyList<string> Scopes { get; }
 
+    /// <summary>A refresh token for the issued token, when ThunderID returns one.</summary>
     public string? RefreshToken { get; }
 }

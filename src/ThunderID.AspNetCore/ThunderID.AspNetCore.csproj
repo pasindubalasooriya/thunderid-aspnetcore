@@ -4,11 +4,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <PropertyGroup>
     <PackageId>ThunderID.AspNetCore</PackageId>
-    <Version>0.4.0</Version>
+    <Version>1.0.0</Version>
     <Authors>Pasindu Balasooriya</Authors>
     <Description>Sign users in to ASP.NET Core apps with ThunderID, protect APIs with ThunderID access tokens, and end sessions on OIDC back-channel logout.</Description>
     <PackageTags>thunderid;openid-connect;oidc;oauth2;authentication;aspnetcore;backchannel-logout</PackageTags>
