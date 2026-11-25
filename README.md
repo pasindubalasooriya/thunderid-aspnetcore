@@ -23,6 +23,11 @@ Requires .NET 10. From 1.0.0 the package follows semantic versioning: see
 [ThunderID SDK specification](https://github.com/thunder-id/thunderid/blob/main/docs-internals/sdk-development/spec.md)
 v0.9, as a Framework Specific SDK for ASP.NET Core.
 
+**Tested with:** ThunderID built from commit
+[`46a6afc35`](https://github.com/thunder-id/thunderid/commit/46a6afc350d85201d75027f18257492875abbf0b),
+which the [end-to-end tests](#end-to-end-tests) run against every night. It hasn't been tested
+against ThunderID v1.1.0, the latest release, which doesn't include back-channel logout delivery.
+
 **Layers:** there's no ThunderID .NET SDK to build on, so the protocol layer is ASP.NET Core's own
 OpenID Connect and JWT bearer handlers (`Microsoft.AspNetCore.Authentication.OpenIdConnect`,
 `Microsoft.AspNetCore.Authentication.JwtBearer`). This package covers the Framework Specific layer
@@ -590,3 +595,4 @@ Each release's notes are in [docs/release-notes](docs/release-notes).
 | `tests/e2e/thunderid` | The end-to-end ThunderID: compose file, configuration and test resources |
 | `docs/backchannel-logout.png` | The sequence diagram above (`.drawio` source alongside) |
 | `docs/release-notes` | Release notes for each version |
+| `SECURITY.md` | How to report a vulnerability privately |
