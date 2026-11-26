@@ -25,8 +25,9 @@ v0.9, as a Framework Specific SDK for ASP.NET Core.
 
 **Tested with:** ThunderID built from commit
 [`46a6afc35`](https://github.com/thunder-id/thunderid/commit/46a6afc350d85201d75027f18257492875abbf0b),
-which the [end-to-end tests](#end-to-end-tests) run against every night. It hasn't been tested
-against ThunderID v1.1.0, the latest release, which doesn't include back-channel logout delivery.
+which the [end-to-end tests](#end-to-end-tests) run against every night. Against ThunderID v1.1.1,
+the latest release, 8 of the 10 end-to-end tests pass: everything works except back-channel logout,
+because v1.1.1 doesn't put `sid` in ID tokens or send back-channel logout requests.
 
 **Layers:** there's no ThunderID .NET SDK to build on, so the protocol layer is ASP.NET Core's own
 OpenID Connect and JWT bearer handlers (`Microsoft.AspNetCore.Authentication.OpenIdConnect`,
