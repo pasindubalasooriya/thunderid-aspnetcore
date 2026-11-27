@@ -85,7 +85,7 @@ This runs the two samples: `samples/WebApp` (Razor Pages, `https://localhost:710
 
 - .NET 10 SDK.
 - A trusted ASP.NET Core development certificate: `dotnet dev-certs https --trust`.
-- **ThunderID built from `main`.** Back-channel logout delivery isn't in a release yet (v1.1.0,
+- **ThunderID built from `main`.** Back-channel logout delivery isn't in a release yet (v1.1.1,
   the latest, doesn't include it). Build with `pwsh ./build.ps1 build` from a native PowerShell terminal, then unzip
   `target/dist/thunderid-*-win-x64.zip` (or your platform's zip).
 
@@ -100,11 +100,31 @@ This runs the two samples: `samples/WebApp` (Razor Pages, `https://localhost:710
          reject_private_addresses: false
    ```
 2. On a fresh unzip, run `setup.ps1` once with `ADMIN_PASSWORD` set (it generates the keys and
-   the admin user), then `start.ps1`. The server listens on `https://localhost:8090`.
+   the admin user), then `start.ps1` (`setup.sh` and `start.sh` on macOS and Linux). The server
+   listens on `https://localhost:8090`.
 3. Trust ThunderID's self-signed certificate, or .NET won't fetch the discovery document
-   (`IDX20803 ... UntrustedRoot`). On Windows, for development only:
+   (`IDX20803 ... UntrustedRoot`). For development only, from the server's folder:
    ```powershell
+   # Windows
    Import-Certificate -FilePath config\certs\server.cert -CertStoreLocation Cert:\CurrentUser\Root
+   ```
+   ```bash
+   # macOS
+   security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db config/certs/server.cert
+
+   # Debian and Ubuntu
+   sudo cp config/certs/server.cert /usr/local/share/ca-certificates/thunderid.crt
+   sudo update-ca-certificates
+
+   # Fedora and RHEL
+   sudo cp config/certs/server.cert /etc/pki/ca-trust/source/anchors/thunderid.crt
+   sudo update-ca-trust
+   ```
+4. On macOS, also turn on .NET's TLS 1.3 support in the terminal you run the samples from.
+   ThunderID accepts only TLS 1.3 by default, and .NET on macOS stops at TLS 1.2 unless told
+   otherwise, so every request to ThunderID fails with `bad protocol version`:
+   ```bash
+   export DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1
    ```
 
 ### 3. Register the web app in the ThunderID console
